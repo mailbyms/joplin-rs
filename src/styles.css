@@ -192,6 +192,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-soft
 .note-card.active { background: #fff; border-color: #c7d8f2; box-shadow: 0 1px 4px rgba(29, 78, 216, .10); }
 /* Drag source while the card is being carried to a notebook. */
 .note-card.dragging { opacity: .45; }
+/* Right-clicked card: the menu acts on this row, so mark it while it is open. */
+.note-card.context-target { background: #e8f0fe; border-color: #bcd3f5; }
 .card-top { display: flex; gap: 8px; align-items: baseline; }
 .card-title { flex: 1; font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-time { font-size: 10.5px; color: var(--text-faint); white-space: nowrap; }
@@ -440,3 +442,84 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-soft
 .sync-datadir code { font-size: 11px; color: var(--text); word-break: break-all; user-select: all; }
 .sync-datadir small { font-size: 10.5px; color: var(--text-faint); line-height: 1.5; }
 
+
+/* ---------- note list context menu ---------- */
+/* Anchored at the cursor and rendered into <body>, so the list's scroll
+   container can never clip it. */
+.context-menu {
+  position: fixed; z-index: 80; min-width: 168px; padding: 5px;
+  background: #fff; border: 1px solid var(--border); border-radius: 9px;
+  box-shadow: 0 10px 28px rgba(15, 25, 45, .16), 0 2px 6px rgba(15, 25, 45, .08);
+}
+.context-item {
+  display: flex; align-items: center; gap: 9px; width: 100%; padding: 7px 10px;
+  border-radius: 6px; font-size: 12.5px; color: var(--text); text-align: left;
+}
+.context-item:hover, .context-item:focus-visible { background: var(--bg-hover); outline: none; }
+.context-item.danger { color: #b23a2a; }
+.context-item.danger:hover, .context-item.danger:focus-visible { background: #fdecea; }
+.context-icon { width: 14px; font-size: 12px; text-align: center; opacity: .8; }
+
+/* Delete confirmation reuses the modal shell; only the button differs. */
+.confirm-dialog { width: 400px; padding: 22px 24px; }
+.confirm-dialog h2 { font-size: 16px; margin-bottom: 10px; }
+.confirm-dialog p { margin: 0; line-height: 1.75 !important; }
+.danger-btn { padding: 7px 18px; border-radius: 7px; background: #c0392b; color: #fff; font-size: 12.5px; font-weight: 600; }
+.danger-btn:hover { background: #a93226; }
+.toast-ok { background: #17603a; }
+
+/* ---------- PDF export ---------- */
+/* Hidden until an export runs: `body.printing` swaps the whole app for the
+   sheet, because WebView2 prints the live DOM and nothing else. */
+.print-sheet { display: none; }
+/* The app root is hidden, not just `.app-shell`: `#root` keeps its 100% height
+   and would otherwise push the sheet below the first printed page. */
+body.printing #root { display: none; }
+body.printing .print-sheet {
+  display: block; position: fixed; inset: 0; overflow-y: auto;
+  background: #e9edf4; z-index: 70;
+}
+/* 210 × 297mm = A4; margins come from the paper's own padding so the sheet
+   looks the same on screen as it does in the PDF. */
+.print-paper {
+  box-sizing: border-box; width: 210mm; min-height: 297mm; margin: 0 auto;
+  padding: 20mm 18mm; background: #fff; color: #232a35;
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+}
+.print-head h1 {
+  margin: 0 0 8px; font-size: 24px; font-weight: 680; line-height: 1.35;
+  letter-spacing: -.2px; color: #141c28;
+}
+.print-meta {
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline;
+  font-size: 11.5px; color: #8a94a4;
+}
+.print-meta-sep { opacity: .55; }
+.print-folder { display: inline-flex; align-items: center; gap: 5px; }
+.print-folder svg { color: #9aa4b2; flex: 0 0 auto; }
+.print-body { max-width: none; font-size: 14px; }
+.print-body > :first-child { margin-top: 18px; }
+.pdf-busy {
+  position: fixed; left: 50%; bottom: 34px; transform: translateX(-50%);
+  z-index: 90; padding: 9px 18px; border-radius: 18px;
+  background: rgba(20, 33, 58, .92); color: #fff; font-size: 12.5px;
+  box-shadow: 0 6px 20px rgba(15, 25, 45, .28);
+}
+/* Paged media: the paper fills the page, decorations disappear. The page
+   margins come from WebView2's print settings (see `print.rs`) rather than
+   `@page`, because an element's padding is only applied once — pages after the
+   first would otherwise start flush against the paper edge. */
+@page { size: A4; }
+@media print {
+  /* The app pins html/body to the viewport; paginated media needs to flow. */
+  html, body { background: #fff; height: auto !important; overflow: visible !important; }
+  body.printing .print-sheet {
+    position: static; inset: auto; overflow: visible; background: #fff;
+  }
+  .print-paper { width: auto; min-height: 0; margin: 0; padding: 0; box-shadow: none; }
+  .pdf-busy, .toast, .context-menu, .modal-backdrop { display: none !important; }
+  .print-body a { color: inherit; }
+  /* Keep blocks from breaking across pages where it is cheap to avoid. */
+  .print-body pre, .print-body blockquote, .print-body table { break-inside: avoid; }
+  .print-body h1, .print-body h2, .print-body h3 { break-after: avoid; }
+}

@@ -188,6 +188,18 @@ gzip 138 KB 的 ProseMirror + remark 共享 chunk），只在首次切到打字�
   这样下一次 WebDAV 同步会把新归属推上去；目标笔记本不存在时直接报错而不是产生孤儿笔记。
   注意 `tauri.conf.json` 里必须 `"dragDropEnabled": false`，否则 Windows 上 WebView2 的
   系统级拖放处理会吞掉页面内的 HTML5 拖拽事件。
+- **笔记列表支持右键菜单**（`.context-menu`，渲染到 `<body>`，靠近视口边缘会自动翻转）：
+  - **导出为 PDF**：先弹系统保存对话框选路径，然后把整个界面换成一张 A4 排版的
+    `PrintSheet`（标题 / 📖 笔记本 / 更新时间 / 标签 / 正文），等附件解码与字体就绪后，
+    由 Rust 侧调 WebView2 的 `ICoreWebView2_7::PrintToPdf` 直接把当前 DOM 打成 PDF。
+    文字是矢量的（可选中、可搜索），代码块/表格/引用的浅色底也会打印出来
+    （`ShouldPrintBackgrounds(true)`）。`window.print()` 只会弹出 Edge 的打印预览，
+    Tauri 自带的 `print()` 又只有 macOS 支持，所以才走 COM 接口，见 `src-tauri/src/print.rs`。
+    页边距（上下 20mm、左右 18mm）设在 PrintSettings 里而不是 CSS：元素的 padding 只会
+    生效一次，用 CSS 做页边距会让第 2 页起紧贴纸边（踩过这个坑）。
+  - **删除笔记**：先弹应用内确认框，确认后走 Joplin 自己的墓碑逻辑
+    （`deleted_time` + `deleted_items` + `joplin_rs_pending_deletes`），下次同步把删除推到云端，
+    需要时仍可在官方客户端恢复。删的是当前打开的笔记时，编辑区自动跳到相邻的一篇。
 - `list_notes` 不再偷偷截断（旧实现默认 300 / 前端 500），`limit <= 0` 即「全部」；
   搜索同样不再封顶 120 条。列表计数已从界面上移除，但全量加载仍然是必须的。
 - 左侧导航栏使用比笔记列表深一档的表面色（`--bg-rail #e5ecf7`，列表 `#f7f9fd`），

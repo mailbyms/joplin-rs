@@ -237,6 +237,29 @@ pub fn delete_note(state: State<'_, AppState>, id: String) -> Result<()> {
     Ok(())
 }
 
+/// Write whatever the window currently shows to a PDF file.
+///
+/// The frontend first swaps the whole UI for a print-only sheet holding the
+/// note, so no note id is needed here: the DOM *is* the document. Rendering and
+/// file output both happen inside WebView2 (see `print.rs`), which keeps the
+/// text selectable instead of rasterising a screenshot.
+#[tauri::command]
+pub async fn export_note_pdf(window: tauri::WebviewWindow, path: String) -> Result<()> {
+    #[cfg(windows)]
+    {
+        // The COM call blocks until WebView2 reports completion; keep it off the
+        // async runtime's worker threads.
+        tauri::async_runtime::spawn_blocking(move || crate::print::export(&window, &path))
+            .await
+            .map_err(|e| Error::msg(format!("导出任务异常: {e}")))?
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (window, path);
+        Err(Error::msg("当前平台暂不支持导出 PDF"))
+    }
+}
+
 #[tauri::command]
 pub fn create_folder(
     state: State<'_, AppState>,

@@ -5,11 +5,14 @@ import type { NoteSummary } from "../types";
 interface Props {
   notes: NoteSummary[];
   activeId: string | null;
+  /** Card whose context menu is open — highlighted so the menu has an anchor. */
+  contextId: string | null;
   searchValue: string;
   searchRef: RefObject<HTMLInputElement | null>;
   onSearchChange: (value: string) => void;
   onSelect: (id: string) => void;
   onNew: () => void;
+  onCardContext: (note: NoteSummary, x: number, y: number) => void;
 }
 
 function formatTime(ts: number): string {
@@ -28,11 +31,13 @@ function formatTime(ts: number): string {
 export default function NoteList({
   notes,
   activeId,
+  contextId,
   searchValue,
   searchRef,
   onSearchChange,
   onSelect,
   onNew,
+  onCardContext,
 }: Props) {
   // Cards are draggable so they can be dropped on a notebook in the sidebar;
   // the id travels in a custom MIME type, the plain-text payload is a fallback
@@ -77,8 +82,12 @@ export default function NoteList({
             key={note.id}
             className={`note-card ${activeId === note.id ? "active" : ""} ${
               draggingId === note.id ? "dragging" : ""
-            }`}
+            } ${contextId === note.id ? "context-target" : ""}`}
             onClick={() => onSelect(note.id)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              onCardContext(note, e.clientX, e.clientY);
+            }}
             draggable
             onDragStart={(e) => {
               e.dataTransfer.setData(NOTE_DRAG_TYPE, note.id);

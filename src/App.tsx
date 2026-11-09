@@ -1,8 +1,11 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { save } from "@tauri-apps/plugin-dialog";
 import { api } from "./api";
 import Sidebar from "./components/Sidebar";
 import NoteList from "./components/NoteList";
+import ContextMenu from "./components/ContextMenu";
+import PrintSheet, { type PrintJob } from "./components/PrintSheet";
 import SyncDialog from "./components/SyncDialog";
 // The two editors are the heaviest dependencies. Textus-style startup budget:
 // each is fetched only when its editing view is actually opened, and they are
@@ -106,6 +109,20 @@ export default function App() {
     title: string;
   } | null>(null);
 
+  // Right-click menu of the note list, plus the two things it can trigger.
+  const [menu, setMenu] = useState<{
+    note: NoteSummary;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<NoteSummary | null>(null);
+  const [printJob, setPrintJob] = useState<PrintJob | null>(null);
+  const [pdfBusy, setPdfBusy] = useState(false);
+  // Non-error feedback ("已导出 PDF …"); the `error` toast stays reserved for
+  // things that actually went wrong.
+  const [notice, setNotice] = useState<string | null>(null);
+  const printReady = useRef<(() => void) | null>(null);
+
   // Re-render once a minute so "12 分钟前" stays truthful without polling the
   // backend. Only runs while a timestamp actually exists.
   const [, setClockTick] = useState(0);
@@ -120,6 +137,7 @@ export default function App() {
   const dirtyRef = useRef(false);
   const saveTimer = useRef<number | null>(null);
   const renderTimer = useRef<number | null>(null);
+  const noticeTimer = useRef<number | null>(null);
 
   const refreshNotes = useCallback(async () => {
     // Search results are managed by the search effect; never clobber them.
@@ -279,6 +297,111 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [loadShell, refreshNotes, selection.kind],
   );
+
+  /** Context menu → 删除：soft-delete, same tombstone flow as Joplin itself. */
+  const deleteNote = useCallback(
+    async (target: NoteSummary) => {
+      // Neighbours are captured before the list is reloaded: after the delete
+      // the editor should land on the next note instead of going blank.
+      const before = notes;
+      const at = before.findIndex((n) => n.id === target.id);
+      const wasActive = activeRef.current?.id === target.id;
+      try {
+        await api.deleteNote(target.id);
+        if (wasActive) {
+          if (saveTimer.current) window.clearTimeout(saveTimer.current);
+          dirtyRef.current = false;
+          activeRef.current = null;
+          setActiveNote(null);
+          setRendered(null);
+          setStatus("saved");
+        }
+        await loadShell();
+        if (selection.kind === "search" && searchInput.trim()) {
+          setNotes(await api.searchNotes(searchInput.trim()));
+        } else {
+          await refreshNotes();
+        }
+        if (wasActive) {
+          const neighbour = before[at + 1] ?? before[at - 1];
+          if (neighbour && neighbour.id !== target.id) await openNote(neighbour.id);
+        }
+        if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
+        setNotice(`已删除「${target.title || "无标题笔记"}」`);
+        noticeTimer.current = window.setTimeout(() => setNotice(null), 4000);
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [notes, selection, searchInput, loadShell, refreshNotes, openNote],
+  );
+
+  /** Context menu → 导出为 PDF.
+   *
+   * WebView2 prints the DOM, so the order matters: put the note on a print-only
+   * sheet, wait for fonts and attachments to settle, then let Rust write the
+   * file. `pdfBusy` keeps the rest of the UI out of the way meanwhile.
+   */
+  const exportPdf = useCallback(
+    async (target: NoteSummary) => {
+      if (pdfBusy) return;
+      setPdfBusy(true);
+      try {
+        // The PDF is built from the database copy, so pending edits have to land
+        // first — otherwise the export silently omits the last keystrokes.
+        await flushSave();
+        const note = await api.getNote(target.id);
+        const name =
+          (note.title || "无标题笔记").replace(/[\\/:*?"<>|]/g, "_").trim() ||
+          "无标题笔记";
+        const path = await save({
+          title: "导出为 PDF",
+          defaultPath: `${name}.pdf`,
+          filters: [{ name: "PDF 文档", extensions: ["pdf"] }],
+        });
+        if (!path) return;
+        const html = await api.renderNote(note.id);
+        const ready = new Promise<void>((resolve) => {
+          printReady.current = resolve;
+        });
+        setPrintJob({
+          title: note.title,
+          folder: folders.find((f) => f.id === note.parentId)?.title ?? "",
+          updatedLabel: formatUpdated(note.updatedTime),
+          tags: note.tags,
+          html: html.html,
+        });
+        // The sheet signals readiness itself; the race keeps a broken
+        // attachment from stalling the export indefinitely.
+        await Promise.race([
+          ready,
+          new Promise((resolve) => window.setTimeout(resolve, 4000)),
+        ]);
+        await api.exportNotePdf(path);
+        if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
+        setNotice(`已导出 PDF：${path}`);
+        noticeTimer.current = window.setTimeout(() => setNotice(null), 6000);
+      } catch (e) {
+        setError(String(e));
+      } finally {
+        printReady.current = null;
+        setPrintJob(null);
+        setPdfBusy(false);
+      }
+    },
+    [pdfBusy, folders, flushSave],
+  );
+
+  const handlePrintReady = useCallback(() => {
+    printReady.current?.();
+  }, []);
+
+  // While a PDF is being written the window shows only the print sheet; the
+  // class is what swaps `.app-shell` out (see `.print-sheet` in styles.css).
+  useEffect(() => {
+    document.body.classList.toggle("printing", printJob !== null);
+    return () => document.body.classList.remove("printing");
+  }, [printJob]);
 
   const newNote = useCallback(async () => {
     if (!bootstrap?.ok) return;
@@ -593,11 +716,13 @@ export default function App() {
         <NoteList
           notes={notes}
           activeId={activeNote?.id ?? null}
+          contextId={menu?.note.id ?? null}
           searchValue={searchInput}
           searchRef={searchRef}
           onSearchChange={setSearchInput}
           onSelect={(id) => void openNote(id)}
           onNew={() => void newNote()}
+          onCardContext={(note, x, y) => setMenu({ note, x, y })}
         />
 
         <main className="workspace">
@@ -747,6 +872,13 @@ export default function App() {
         </div>
       )}
 
+      {notice && (
+        <div className="toast toast-ok" onClick={() => setNotice(null)}>
+          <span>✓ {notice}</span>
+          <button>×</button>
+        </div>
+      )}
+
       {showAbout && (
         <div className="modal-backdrop" onClick={() => setShowAbout(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -778,6 +910,8 @@ export default function App() {
             </dl>
             <p className="modal-hint">
               快捷键：Ctrl+N 新建 · Ctrl+S 保存 · Ctrl+F 搜索 · Ctrl+E 切换源码 / 打字机
+              <br />
+              右键笔记卡片：导出为 PDF · 删除笔记
             </p>
             <button className="primary-btn" onClick={() => setShowAbout(false)}>
               关闭
@@ -831,6 +965,64 @@ export default function App() {
           </form>
         </div>
       )}
+
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          items={[
+            {
+              label: "导出为 PDF",
+              icon: "⤓",
+              onSelect: () => void exportPdf(menu.note),
+            },
+            {
+              label: "删除笔记",
+              icon: "🗑",
+              danger: true,
+              onSelect: () => setPendingDelete(menu.note),
+            },
+          ]}
+        />
+      )}
+
+      {pendingDelete && (
+        <div className="modal-backdrop" onClick={() => setPendingDelete(null)}>
+          <div
+            className="modal confirm-dialog"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2>删除这篇笔记？</h2>
+            <p>
+              「{pendingDelete.title || "无标题笔记"}」会被移入 Joplin
+              的垃圾桶，下次同步时同步到云端；需要时可以再用官方客户端恢复。
+            </p>
+            <div className="prompt-actions">
+              <button
+                className="ghost-btn"
+                onClick={() => setPendingDelete(null)}
+              >
+                取消
+              </button>
+              <button
+                className="danger-btn"
+                onClick={() => {
+                  const target = pendingDelete;
+                  setPendingDelete(null);
+                  void deleteNote(target);
+                }}
+              >
+                删除
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {printJob && <PrintSheet job={printJob} onReady={handlePrintReady} />}
+
+      {printJob && <div className="pdf-busy">正在生成 PDF…</div>}
     </div>
   );
 }

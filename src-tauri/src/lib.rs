@@ -14,6 +14,8 @@ mod error;
 mod markdown;
 mod model;
 mod paths;
+#[cfg(windows)]
+mod print;
 mod search;
 mod state;
 mod sync;
@@ -183,6 +185,7 @@ pub fn run() {
             commands::create_note,
             commands::move_note,
             commands::delete_note,
+            commands::export_note_pdf,
             commands::create_folder,
             commands::rename_folder,
             commands::list_tags,
