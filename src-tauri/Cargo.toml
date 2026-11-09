@@ -1,0 +1,43 @@
+[package]
+name = "joplin-rs"
+version = "0.1.0"
+description = "A memory-light, Joplin-compatible note app built with Rust and Tauri 2"
+edition = "2021"
+rust-version = "1.85"
+
+[lib]
+name = "joplin_rs_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+parking_lot = "0.12"
+thiserror = "2"
+chrono = "0.4"
+uuid = { version = "1", features = ["v4"] }
+regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls-webpki-roots", "charset"] }
+quick-xml = "0.42"
+
+[features]
+default = []
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "unwind"
+
+[profile.dev]
+opt-level = 1

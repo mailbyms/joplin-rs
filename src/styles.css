@@ -1,0 +1,442 @@
+:root {
+  --bg: #fdfeff;
+  --bg-side: #f1f4fa;
+  --bg-rail: #e5ecf7;
+  --bg-list: #f7f9fd;
+  --bg-hover: #e9eff8;
+  --bg-active: #dde8fa;
+  --border: #dde4ee;
+  --border-soft: #e9eef6;
+  --text: #1f2733;
+  --text-soft: #5b6675;
+  --text-faint: #96a1b0;
+  --accent: #1d4ed8;
+  --accent-soft: #e3ecfb;
+  --green: #4c8b5a;
+  --shadow: 0 6px 28px rgba(23, 37, 84, 0.12);
+  /* Source-mode token palette (see MarkdownEditor.tsx / Textus's
+     source-highlight.ts). Keeping the colours here lets the editor theme it. */
+  --src-heading: #1d4ed8;
+  --src-marker: #96a1b0;
+  --src-strong: #16368f;
+  --src-emphasis: #2f6fbf;
+  --src-quote: #67707d;
+  --src-list: #4c8b5a;
+  --src-link: #2c6ea3;
+  --src-url: #7a5aa6;
+  --src-code: #16368f;
+  --src-token-string: #4c8b5a;
+  --src-token-number: #a8761c;
+  --src-token-keyword: #16368f;
+  --src-token-function: #2c6ea3;
+  --src-token-tag: #9a4a73;
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--bg);
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; margin: 0; overflow: hidden; }
+button, input { font-family: inherit; font-size: inherit; color: inherit; }
+button { cursor: pointer; border: none; background: none; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-soft); outline-offset: 1px; }
+
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-thumb { background: #ccd4df; border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: #b5bdc6; background-clip: padding-box; }
+::-webkit-scrollbar-track { background: transparent; }
+
+.loading-screen, .setup-screen {
+  height: 100%; display: flex; align-items: center; justify-content: center;
+  background: var(--bg-side); color: var(--text-soft);
+}
+.setup-card {
+  width: 480px; padding: 38px 40px; background: var(--bg);
+  border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow);
+  text-align: center;
+}
+.setup-logo { font-size: 40px; color: var(--accent); }
+.setup-logo img { width: 52px; height: 52px; display: block; margin: 0 auto; }
+.setup-card h1 { margin: 10px 0 18px; font-size: 24px; }
+.setup-card code { display: inline-block; padding: 8px 12px; background: var(--bg-side); border-radius: 6px; font-size: 12px; word-break: break-all; }
+.setup-hint { margin-top: 20px; line-height: 1.9; font-size: 13px; }
+.setup-note { margin-top: 22px; font-size: 12px; color: var(--text-faint); }
+
+/* First-run guide: the library starts empty and is filled from WebDAV only. */
+.setup-card ol.setup-steps {
+  margin: 20px auto 0; padding: 0 0 0 20px; max-width: 360px;
+  text-align: left; font-size: 13px; line-height: 2; color: var(--text-soft);
+}
+.setup-actions { display: flex; gap: 10px; justify-content: center; margin-top: 24px; }
+
+.app-shell { height: 100%; display: flex; flex-direction: column; }
+
+/* There is no top bar any more: the note list header carries the search field
+   and the sidebar footer carries sync status. */
+.ghost-btn { padding: 5px 10px; border-radius: 6px; color: var(--text-soft); font-size: 12.5px; }
+.ghost-btn:hover { background: var(--bg-hover); color: var(--text); }
+.ghost-btn:disabled { opacity: .55; }
+
+.main-row { flex: 1; display: flex; min-height: 0; }
+
+/* ---------- sidebar ---------- */
+.sidebar { width: 232px; flex: 0 0 232px; background: var(--bg-rail); border-right: 1px solid #d4deec; display: flex; flex-direction: column; }
+.primary-btn { width: 100%; padding: 8px 14px; background: var(--accent); color: #fff; border-radius: 7px; font-weight: 600; font-size: 13px; }
+.primary-btn:hover { background: #1a3fbd; }
+.primary-btn:disabled { opacity: .5; box-shadow: none; }
+/* The new-note button lives in the note list header now, so the nav starts at
+   the very top of the sidebar. */
+.sidebar-scroll { flex: 1; overflow-y: auto; padding: 12px 8px 20px; }
+.nav-item {
+  width: 100%; display: flex; align-items: center; gap: 7px; padding: 6px 10px;
+  border-radius: 6px; color: var(--text-soft); font-size: 13px; text-align: left; min-height: 30px;
+}
+.sidebar .nav-item:hover { background: rgba(29, 78, 216, .08); color: var(--text); }
+.nav-item.active { background: #d3e1f8; color: #16368f; font-weight: 600; }
+/* A note card is hovering over this notebook. */
+.nav-item.drop-target {
+  background: var(--bg-active); color: var(--accent);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+.nav-icon { width: 16px; text-align: center; color: var(--text-faint); font-size: 13px; }
+.nav-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-count { font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.tree-arrow { width: 12px; text-align: center; color: var(--text-faint); font-size: 10px; }
+.tree-arrow.empty { opacity: .4; }
+.section-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 10px 5px; font-size: 11px; letter-spacing: .8px; color: var(--text-faint); text-transform: uppercase; }
+.icon-btn { width: 24px; height: 24px; border-radius: 5px; color: var(--text-soft); font-size: 16px; line-height: 1; }
+.icon-btn:hover { background: var(--bg-hover); color: var(--accent); }
+
+/* Sidebar footer: the only entry point left for WebDAV sync, plus a rolling
+   ticker of the latest sync milestones ("已获取条目：1/1。已完成"). */
+.sidebar-foot {
+  flex: 0 0 auto; padding: 7px 8px 8px 10px; border-top: 1px solid #d4deec;
+  background: var(--bg-rail);
+}
+.foot-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.foot-btn {
+  display: inline-flex; align-items: center; gap: 6px; padding: 5px 8px;
+  border-radius: 6px; font-size: 12.5px; color: var(--text-soft); flex: 0 0 auto;
+}
+.foot-btn:hover { background: rgba(29, 78, 216, .08); color: var(--text); }
+.foot-sync { font-weight: 600; }
+.foot-sync.busy { color: var(--accent); }
+.foot-sync.unconfigured { color: var(--text-faint); }
+.foot-icon { display: block; flex: 0 0 auto; }
+.foot-sync.busy .foot-icon { animation: foot-spin .9s linear infinite; }
+@keyframes foot-spin { to { transform: rotate(360deg); } }
+
+/* Rolling milestones next to the sync button. */
+.sync-ticker {
+  flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap;
+  font-size: 10.5px; line-height: 1.5; color: var(--text-soft);
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 8px, #000 calc(100% - 10px), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 8px, #000 calc(100% - 10px), transparent);
+}
+.ticker-track { display: inline-flex; width: max-content; }
+.ticker-text { padding-right: 8px; }
+/* One pass, constant speed, then stay on the tail. */
+.ticker-track.scrolling {
+  animation-name: ticker-scroll; animation-timing-function: linear;
+  animation-iteration-count: 1; animation-fill-mode: forwards;
+}
+/* The milestones must stay readable in a 148px strip and there is no other way
+   to fit them, so this marquee runs even when the OS asks for reduced motion —
+   same for the spinner that signals a sync is live. */
+@keyframes ticker-scroll {
+  from { transform: translateX(0); }
+  to { transform: translateX(var(--ticker-shift, 0)); }
+}
+
+/* ---------- note list ---------- */
+.note-list { width: 320px; flex: 0 0 320px; background: var(--bg-list); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+/* Header = search field + new-note button. The section name and the note count
+   were dropped: the sidebar already marks the active notebook. */
+.list-head {
+  height: 56px; flex: 0 0 56px; display: flex; align-items: center; gap: 8px;
+  padding: 0 12px; border-bottom: 1px solid var(--border-soft);
+}
+/* Compact search field. */
+.list-search { position: relative; flex: 1 1 0; min-width: 84px; }
+.list-search input {
+  width: 100%; height: 27px; padding: 0 22px 0 24px; font-size: 12px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--bg);
+  transition: border-color .15s, box-shadow .15s;
+}
+.list-search input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(29, 78, 216, .10); }
+.list-search input::placeholder { color: var(--text-faint); }
+.list-search .search-icon {
+  position: absolute; left: 6px; top: 50%; transform: translateY(-50%);
+  color: var(--text-faint); font-size: 15px; pointer-events: none;
+}
+.list-search .clear-btn {
+  position: absolute; right: 5px; top: 50%; transform: translateY(-50%);
+  width: 16px; height: 16px; border-radius: 50%; color: var(--text-faint);
+  font-size: 14px; line-height: 1; display: flex; align-items: center; justify-content: center;
+}
+.list-search .clear-btn:hover { background: var(--bg-hover); color: var(--text); }
+/* New note: same accent as the old sidebar button, sized for the 56px header. */
+.list-new-btn {
+  flex: 0 0 auto; height: 27px; padding: 0 10px; border-radius: 6px;
+  background: var(--accent-soft); color: var(--accent);
+  font-size: 12px; font-weight: 600; white-space: nowrap;
+  transition: background .15s, color .15s;
+}
+.list-new-btn:hover { background: var(--accent); color: #fff; }
+.list-scroll { flex: 1; overflow-y: auto; padding: 8px; }
+.list-empty { padding: 40px 10px; text-align: center; color: var(--text-faint); font-size: 13px; }
+.note-card { display: block; width: 100%; text-align: left; padding: 10px 12px; margin-bottom: 4px; border-radius: 7px; border: 1px solid transparent; }
+.note-card:hover { background: var(--bg-hover); }
+.note-card.active { background: #fff; border-color: #c7d8f2; box-shadow: 0 1px 4px rgba(29, 78, 216, .10); }
+/* Drag source while the card is being carried to a notebook. */
+.note-card.dragging { opacity: .45; }
+.card-top { display: flex; gap: 8px; align-items: baseline; }
+.card-title { flex: 1; font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-time { font-size: 10.5px; color: var(--text-faint); white-space: nowrap; }
+.card-excerpt { margin-top: 5px; font-size: 11.5px; line-height: 1.55; color: var(--text-faint); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* ---------- workspace ---------- */
+.workspace { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg); }
+.editor-header { flex: 0 0 auto; padding: 16px 28px 8px; border-bottom: 1px solid var(--border-soft); }
+/* Title on the left, quiet provenance on the right: notebook + last save. */
+.title-row { display: flex; align-items: center; gap: 18px; }
+.title-input { flex: 1 1 auto; min-width: 0; width: 100%; border: none; background: transparent; font-size: 23px; font-weight: 650; letter-spacing: -.3px; padding: 2px 0; }
+.title-input:focus { outline: none; }
+.title-input::placeholder { color: var(--text-faint); }
+/* Deliberately unemphasised: normal weight, muted, smaller than the title. */
+.title-meta {
+  flex: 0 0 auto; display: inline-flex; align-items: baseline; gap: 6px;
+  font-size: 11.5px; font-weight: 400; color: var(--text-faint);
+  white-space: nowrap; letter-spacing: 0;
+  max-width: 42%; overflow: hidden;
+}
+.title-folder { overflow: hidden; text-overflow: ellipsis; max-width: 190px; }
+.title-folder-icon {
+  margin-right: 4px; font-size: 12px;
+  font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif;
+}
+.title-meta-sep { opacity: .55; }
+/* Tags only take a row when the note actually has some. */
+.meta-line { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+.tag-line { font-size: 11.5px; color: var(--accent); }
+.spacer { flex: 1; }
+/* View mode is a single iOS/macOS-style switch: off = 打字机 (WYSIWYG, the
+   default), on = 源码. It sits at the end of the title row — a dedicated row
+   for one 36px pill wasted too much height. */
+.mode-toggle { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 8px; }
+.mode-toggle-label { font-size: 11.5px; color: var(--text-soft); user-select: none; }
+.switch {
+  position: relative; flex: 0 0 auto; width: 36px; height: 21px; padding: 0;
+  border-radius: 999px; background: #ccd6e5;
+  box-shadow: inset 0 0 0 1px rgba(23, 37, 84, .07);
+  transition: background .18s ease;
+}
+.switch:hover { background: #bfcbdd; }
+.switch[aria-checked="true"] { background: var(--accent); }
+.switch[aria-checked="true"]:hover { background: #1a45c0; }
+.switch:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(29, 78, 216, .22); }
+.knob {
+  position: absolute; top: 2px; left: 2px; width: 17px; height: 17px;
+  border-radius: 50%; background: #fff;
+  box-shadow: 0 1px 2px rgba(23, 37, 84, .28), 0 0 0 .5px rgba(23, 37, 84, .06);
+  transition: transform .18s cubic-bezier(.4, 0, .2, 1);
+}
+.switch[aria-checked="true"] .knob { transform: translateX(15px); }
+@media (prefers-reduced-motion: reduce) {
+  .switch, .knob { transition: none; }
+}
+.editor-body { flex: 1; min-height: 0; display: flex; }
+.editor-body.mode-source .pane, .editor-body.mode-preview .pane, .editor-body.mode-wysiwyg .pane { width: 100%; }
+.pane { min-width: 0; flex: 1; overflow: hidden; }
+.source-pane { border-right: 1px solid var(--border-soft); }
+.editor-body.mode-preview .source-pane { display: none; }
+.cm-host { height: 100%; }
+.cm-host .cm-editor { height: 100%; }
+.pane-loading { height: 100%; display: flex; align-items: center; justify-content: center; color: var(--text-faint); font-size: 13px; }
+
+/* ---------- wysiwyg (Milkdown / ProseMirror) ---------- */
+.wysiwyg-wrap { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+.wysiwyg-host { flex: 1; min-height: 0; overflow: auto; background: var(--bg); }
+.wysiwyg-notice { flex: 0 0 auto; display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: var(--accent-soft); color: #16368f; font-size: 12px; line-height: 1.5; }
+.wysiwyg-notice span { flex: 1; }
+.wysiwyg-notice button { flex: 0 0 auto; color: var(--accent); font-size: 12px; text-decoration: underline; }
+/* Crepe ships its component CSS separately from the palette: see the
+   theme/common/style.css import in WysiwygEditor.tsx. Without it the toolbar,
+   slash menu, link tooltip and block handle are bare blocks in document order. */
+.wysiwyg-host .milkdown {
+  --crepe-color-background: var(--bg);
+  --crepe-color-on-background: var(--text);
+  --crepe-color-surface: #ffffff;
+  --crepe-color-surface-low: var(--bg-side);
+  --crepe-color-on-surface: var(--text);
+  --crepe-color-on-surface-variant: var(--text-soft);
+  --crepe-color-outline: #96a1b0;
+  --crepe-color-primary: var(--accent);
+  --crepe-color-secondary: var(--accent-soft);
+  --crepe-color-on-secondary: #16368f;
+  --crepe-color-inverse: #14213a;
+  --crepe-color-on-inverse: #fdfeff;
+  --crepe-color-inline-code: #16368f;
+  --crepe-color-error: #b23b2e;
+  --crepe-color-hover: var(--bg-hover);
+  --crepe-color-selected: var(--bg-active);
+  --crepe-color-inline-area: #e6edf9;
+  --crepe-shadow-1: 0 4px 14px rgba(23, 37, 84, .14);
+  --crepe-shadow-2: 0 8px 26px rgba(23, 37, 84, .18);
+  --crepe-font-title: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --crepe-font-default: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --crepe-font-code: "Cascadia Code", Consolas, monospace;
+  --crepe-base-font-size: 15px;
+  position: relative;
+  min-height: 100%;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--bg);
+}
+/* A bare contenteditable gets Chromium's black focus ring when Crepe's reset
+   stylesheet is missing. Keep the editing surface borderless either way. */
+.wysiwyg-host .milkdown .ProseMirror,
+.wysiwyg-host .milkdown .ProseMirror-focused,
+.wysiwyg-host .milkdown [contenteditable="true"] {
+  border: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+.wysiwyg-host .milkdown .ProseMirror { max-width: 780px; margin: 0 auto; padding: 20px 34px 140px; min-height: 60vh; line-height: 1.85; color: var(--text); }
+.wysiwyg-host .milkdown .ProseMirror img { max-width: 100%; }
+.wysiwyg-host .milkdown .ProseMirror a { color: var(--accent); }
+.wysiwyg-host .milkdown .ProseMirror code { color: #16368f; }
+/* Floating widgets are absolutely positioned against .milkdown. These rules
+   also act as a safety net if the component stylesheet ever fails to load. */
+.wysiwyg-host .milkdown .milkdown-toolbar,
+.wysiwyg-host .milkdown .milkdown-slash-menu,
+.wysiwyg-host .milkdown .milkdown-link-preview,
+.wysiwyg-host .milkdown .milkdown-link-edit,
+.wysiwyg-host .milkdown .milkdown-block-handle {
+  position: absolute;
+  z-index: 20;
+}
+.wysiwyg-host .milkdown .milkdown-toolbar[data-show="false"],
+.wysiwyg-host .milkdown .milkdown-slash-menu[data-show="false"],
+.wysiwyg-host .milkdown .milkdown-link-preview[data-show="false"],
+.wysiwyg-host .milkdown .milkdown-link-edit[data-show="false"] {
+  display: none;
+}
+.wysiwyg-host .milkdown .milkdown-block-handle[data-show="false"] {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ---------- preview ---------- */
+.preview-scroll { position: relative; height: 100%; overflow-y: auto; padding: 20px 34px 120px; }
+.preview-empty { height: 100%; display: flex; align-items: center; justify-content: center; color: var(--text-faint); }
+.markdown-body { max-width: 780px; margin: 0 auto; font-size: 15px; line-height: 1.85; color: #232a35; }
+.markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4 { line-height: 1.4; margin: 1.6em 0 .6em; font-weight: 680; color: #141c28; scroll-margin-top: 20px; }
+.markdown-body h1 { font-size: 1.9em; border-bottom: 1px solid var(--border); padding-bottom: .3em; }
+.markdown-body h2 { font-size: 1.5em; }
+.markdown-body h3 { font-size: 1.24em; }
+.markdown-body h4 { font-size: 1.08em; }
+.markdown-body p { margin: .75em 0; }
+.markdown-body a { color: var(--accent); text-decoration: none; border-bottom: 1px solid #a9c4ee; }
+.markdown-body a:hover { border-bottom-color: var(--accent); }
+.markdown-body strong { color: #101822; }
+.markdown-body blockquote { margin: 1em 0; padding: 4px 16px; border-left: 3px solid #a9c4ee; background: #f4f8ff; color: var(--text-soft); }
+.markdown-body blockquote p { margin: .35em 0; }
+.markdown-body code { font-family: "Cascadia Code", Consolas, monospace; font-size: .88em; background: #eef3fb; padding: 2px 5px; border-radius: 4px; color: #16368f; }
+.markdown-body pre { background: #f4f7fc; border: 1px solid var(--border-soft); border-radius: 8px; padding: 14px 16px; overflow-x: auto; line-height: 1.6; }
+.markdown-body pre code { background: none; padding: 0; color: #2b333f; font-size: .87em; }
+.markdown-body img { max-width: 100%; border-radius: 6px; margin: .5em 0; }
+.markdown-body img[data-resource]:not([src]) { min-height: 24px; }
+.markdown-body table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: .93em; }
+.markdown-body th, .markdown-body td { border: 1px solid var(--border); padding: 7px 11px; text-align: left; }
+.markdown-body th { background: var(--bg-side); font-weight: 650; }
+.markdown-body ul, .markdown-body ol { padding-left: 1.6em; margin: .7em 0; }
+.markdown-body li { margin: .25em 0; }
+.markdown-body li input[type="checkbox"] { margin-right: 6px; accent-color: var(--accent); }
+.markdown-body hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+.markdown-body .footnotes { font-size: .88em; color: var(--text-soft); border-top: 1px solid var(--border); margin-top: 2em; }
+.outline { position: absolute; right: 14px; top: 20px; width: 168px; max-height: calc(100% - 50px); overflow-y: auto; border-left: 1px solid var(--border); padding-left: 10px; font-size: 11px; }
+.outline-title { color: var(--text-faint); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+.outline-item { display: block; width: 100%; text-align: left; padding: 2px 0; color: var(--text-faint); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.outline-item:hover { color: var(--accent); }
+.outline-item.level-1, .outline-item.level-2 { color: var(--text-soft); }
+.outline-item.level-3 { padding-left: 10px; }
+.outline-item.level-4, .outline-item.level-5, .outline-item.level-6 { padding-left: 20px; }
+
+/* ---------- status / overlays ---------- */
+.status-bar { flex: 0 0 28px; display: flex; align-items: center; gap: 7px; padding: 0 18px; border-top: 1px solid var(--border-soft); background: var(--bg-list); font-size: 11px; color: var(--text-soft); }
+.status-sep { color: var(--text-faint); }
+.save-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+.save-dot.dirty { background: #d39a3d; }
+.save-dot.saving { background: var(--accent); }
+/* Right-hand side of the status bar: last WebDAV sync + app version. */
+.status-sync { color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.status-version { color: var(--text-faint); font-variant-numeric: tabular-nums; letter-spacing: .2px; }
+.toast { position: fixed; bottom: 42px; left: 50%; transform: translateX(-50%); display: flex; gap: 16px; align-items: center; background: #14213a; color: #fff; padding: 10px 16px; border-radius: 8px; box-shadow: var(--shadow); font-size: 12.5px; max-width: 70vw; }
+.toast button { color: #fff; font-size: 16px; }
+.modal-backdrop { position: fixed; inset: 0; background: rgba(15, 25, 45, .38); display: flex; align-items: center; justify-content: center; }
+.modal { width: 520px; background: var(--bg); border-radius: 12px; padding: 26px 30px; box-shadow: var(--shadow); }
+.modal h2 { margin: 0 0 12px; font-size: 19px; }
+.modal p { line-height: 1.8; color: var(--text-soft); font-size: 13px; }
+.modal dl { display: grid; grid-template-columns: 110px 1fr; gap: 8px 12px; margin: 18px 0; font-size: 12px; }
+.modal dt { color: var(--text-faint); }
+.modal dd { margin: 0; word-break: break-all; color: var(--text-soft); }
+.modal-hint { background: var(--bg-side); padding: 8px 12px; border-radius: 6px; font-size: 12px !important; }
+.modal .primary-btn { width: auto; margin-top: 14px; padding: 7px 22px; }
+
+/* In-app replacement for window.prompt(): WebView2 renders the native one as a
+   dialog titled "tauri.localhost 显示". */
+.prompt-dialog { width: 380px; padding: 22px 24px; }
+.prompt-dialog h2 { font-size: 16px; margin-bottom: 14px; }
+.prompt-input {
+  width: 100%; height: 34px; padding: 0 10px; border: 1px solid var(--border);
+  border-radius: 7px; background: var(--bg-list); font-size: 13px;
+}
+.prompt-input:focus { outline: none; border-color: var(--accent); background: #fff; }
+.prompt-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.modal.prompt-dialog .primary-btn { margin-top: 0; padding: 7px 20px; }
+
+/* ---------- sync dialog ---------- */
+.sync-dialog { width: 680px; max-width: 92vw; max-height: 88vh; overflow-y: auto; padding: 22px 26px; }
+.sync-head { display: flex; align-items: center; justify-content: space-between; }
+.sync-head h2 { margin: 0; }
+.sync-hint { background: var(--bg-side); padding: 9px 12px; border-radius: 6px; margin: 14px 0; font-size: 12px !important; line-height: 1.6 !important; }
+.sync-form { display: flex; flex-direction: column; gap: 12px; }
+.sync-form label { display: flex; flex-direction: column; gap: 5px; font-size: 11.5px; color: var(--text-soft); }
+.sync-form label > span { color: var(--text-faint); }
+.sync-form input[type="text"], .sync-form input:not([type]), .sync-form input[type="password"], .sync-form input[type="number"] {
+  border: 1px solid var(--border-soft); background: var(--bg); color: var(--text);
+  border-radius: 6px; padding: 7px 10px; font-size: 13px; outline: none; font-family: inherit;
+}
+.sync-form input:focus { border-color: var(--accent); }
+.sync-form input::placeholder { color: var(--text-faint); }
+.sync-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.sync-checks { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; margin-top: 2px; }
+.sync-checks label.check { flex-direction: row; align-items: center; gap: 6px; cursor: pointer; }
+.sync-checks label.check input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--accent); }
+.sync-checks label.inline-number input[type="number"] { width: 62px; padding: 3px 6px; font-size: 12px; }
+.sync-meta { font-size: 11px; color: var(--text-faint); word-break: break-all; }
+.sync-loading { padding: 20px 0; color: var(--text-faint); font-size: 13px; }
+.sync-notice { margin-top: 14px; padding: 9px 12px; border-radius: 6px; background: #e8f3ea; color: #2c6b3c; font-size: 12px; word-break: break-all; }
+.sync-notice.bad { background: #f8e9e5; color: #a0442d; }
+.sync-progress { margin-top: 14px; }
+.sync-progress-label { font-size: 12px; color: var(--text-soft); margin-bottom: 6px; }
+.sync-bar { height: 5px; border-radius: 3px; background: var(--bg-side); overflow: hidden; }
+.sync-bar > div { height: 100%; background: var(--accent); transition: width .2s ease; }
+.sync-result { margin-top: 14px; padding: 10px 12px; border: 1px solid var(--border-soft); border-radius: 6px; font-size: 12px; color: var(--text-soft); line-height: 1.7; }
+.sync-result strong { color: var(--text); }
+.sync-errors { margin-top: 6px; color: #a0442d; word-break: break-all; }
+.sync-ignored { margin-top: 6px; color: #8a6520; background: #fbf3e2; border-radius: 4px; padding: 5px 8px; line-height: 1.6; }
+.sync-message { margin-top: 6px; color: var(--text-faint); font-size: 11px; word-break: break-all; }
+.sync-actions { display: flex; align-items: center; gap: 8px; margin-top: 18px; flex-wrap: wrap; }
+.sync-actions .primary-btn { width: auto; margin: 0; padding: 7px 18px; }
+.sync-actions .ghost-btn:disabled { opacity: .5; }
+.sync-footnote { margin-top: 14px !important; font-size: 11px !important; color: var(--text-faint) !important; line-height: 1.6 !important; }
+.sync-datadir { margin-top: 10px; padding: 8px 11px; border: 1px solid var(--border-soft); border-radius: 6px; display: flex; flex-direction: column; gap: 4px; background: var(--bg-side); }
+.sync-datadir > span { font-size: 11px; color: var(--text-soft); }
+.sync-datadir code { font-size: 11px; color: var(--text); word-break: break-all; user-select: all; }
+.sync-datadir small { font-size: 10.5px; color: var(--text-faint); line-height: 1.5; }
+
