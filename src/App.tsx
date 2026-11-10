@@ -573,6 +573,16 @@ export default function App() {
   // Keyboard shortcuts. Re-bound each render so handlers always see fresh state.
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
+      // DevTools before the modifier check: F12 carries no modifier, and
+      // Ctrl+Shift+I mirrors the browser (and Electron's default).
+      if (
+        event.key === "F12" ||
+        (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "i")
+      ) {
+        event.preventDefault();
+        void api.openDevtools();
+        return;
+      }
       const mod = event.ctrlKey || event.metaKey;
       if (!mod) return;
       const key = event.key.toLowerCase();

@@ -73,4 +73,6 @@ export const api = {
   syncRun: () => invoke<SyncResult>("sync_run"),
   appDataDir: () => invoke<string>("app_data_dir"),
   appQuit: () => invoke<void>("app_quit"),
+  /** Opens WebView2's inspector in its own window (F12 / Ctrl+Shift+I). */
+  openDevtools: () => invoke<void>("open_devtools"),
 };

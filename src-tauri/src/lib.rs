@@ -194,6 +194,7 @@ pub fn run() {
             commands::read_resource,
             commands::app_quit,
             commands::app_data_dir,
+            commands::open_devtools,
             sync::sync_get_config,
             sync::sync_status,
             sync::sync_set_config,

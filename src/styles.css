@@ -325,7 +325,20 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-soft
   outline: none !important;
   box-shadow: none !important;
 }
-.wysiwyg-host .milkdown .ProseMirror { padding: 30px 34px 120px; min-height: 60vh; }
+/* The first line sat 42.8px below the header rule: 30px of padding plus the
+   leading block's own .8em margin. Halve it — 20px of padding with no margin on
+   whatever opens the document, so a note that starts with a heading gets the
+   same 20px as one that starts with a paragraph. ProseMirror injects decoration
+   widgets (block handle, virtual cursor) as absolutely positioned first
+   children, so the leading block is either the first child itself or the one
+   right after the first widget. Only the wysiwyg surface is affected; the
+   source editor keeps its own padding. */
+.wysiwyg-host .milkdown .ProseMirror { padding: 20px 34px 120px; min-height: 60vh; }
+.wysiwyg-host .milkdown .ProseMirror > :first-child:not(.ProseMirror-widget):not(.prosemirror-virtual-cursor),
+.wysiwyg-host .milkdown .ProseMirror > .ProseMirror-widget:first-child + *,
+.wysiwyg-host .milkdown .ProseMirror > .ProseMirror-widget:first-child + .ProseMirror-widget + * {
+  margin-top: 0;
+}
 /* Floating widgets are absolutely positioned against .milkdown. These rules
    also act as a safety net if the component stylesheet ever fails to load. */
 .wysiwyg-host .milkdown .milkdown-toolbar,

@@ -374,3 +374,12 @@ pub fn read_resource(state: State<'_, AppState>, id: String) -> Result<ResourceD
 pub fn app_data_dir() -> String {
     crate::paths::data_dir().to_string_lossy().into_owned()
 }
+
+/// Opens WebView2's inspector — the desktop equivalent of Electron's "Toggle
+/// Developer Tools". The window is a separate top-level one owned by WebView2;
+/// Tauri cannot close it on Windows, so the user closes it like any other
+/// window. Requires the `devtools` feature on release builds.
+#[tauri::command]
+pub fn open_devtools(window: tauri::WebviewWindow) {
+    window.open_devtools();
+}

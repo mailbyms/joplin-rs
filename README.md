@@ -102,7 +102,7 @@ Textus 的 README 原文：*"A window takes about 110 MB, and each further windo
 - 源码 / 打字机两种视图（Ctrl+E 切换，「视图」菜单可直达）
 - 新建笔记 / 新建笔记本 / 重命名 / 软删除
 - 关于面板（显示「数据源：WebDAV（唯一来源）」、数据目录与上次同步时间）
-- 快捷键：Ctrl+N 新建 · Ctrl+S 保存 · Ctrl+F 搜索 · Ctrl+E 切换源码 / 打字机
+- 快捷键：Ctrl+N 新建 · Ctrl+S 保存 · Ctrl+F 搜索 · Ctrl+E 切换源码 / 打字机 · F12 / Ctrl+Shift+I 开发者工具
 - 原生菜单栏：文件 / 视图 / 工具 / 帮助；菜单事件经 `menu://action` 转发到前端
 - **WebDAV 同步**：同步设置、连接测试、预演（dry-run）、立即同步、自动同步、进度与结果
 - 应用自包含数据目录（`paths.rs` 统一路径，附件只来自 WebDAV，支持 `JOPLIN_RS_DATA_DIR` 覆盖）
@@ -164,6 +164,11 @@ h1 2.25em、h2 1.75em 且都带 1px `#eee` 下划线，h3 1.5em…h6 1em，列�
 唯一的例外是编辑区标题：打字机模式下标题整体降一档（h1 用 h2 的 1.75em、h2 用 h3 的
 1.5em、h3 用 h4 的 1.25em、h4–h6 均为 1em），正文仍是 16px，源码模式与导出 PDF 不受影响。
 这样把标题与正文的对比压平一点，长时间编辑时视线不必频繁跨越大字号落差。
+
+编辑区顶部同理：正文留 20px 上内边距，同时去掉首块的 `margin-top`，首行与上方标题行之间的
+空白从 42.8px 收到 20px（原本 30px padding + 段落 `.8em` 边距叠加）。ProseMirror 会把
+块手柄 / 虚拟光标这类 widget 作为绝对定位的首个子元素插进来，所以「首个内容块」既可能是
+`:first-child`，也可能是首个 widget 的下一个兄弟节点，两种情况都做了覆盖。
 
 覆盖 Crepe 时有两个坑：组件样式是**懒加载后才注入**的（样式表排在 `styles.css` 之后），
 同特异性一定输，必须用 `:is()` 前缀把特异性抬到 (0,3,x) 以上；另外它的段落是
@@ -472,6 +477,7 @@ cargo test --lib          # 30 个单元测试
 | 缺 `native menu installed` | 原生菜单创建失败（多见于非 Windows/Linux 平台或无窗口环境） |
 | `app data dir` 指向意外位置 | 检查是否设置了 `JOPLIN_RS_DATA_DIR`；同步设置底部也会显示当前目录 |
 | `附件文件不存在: <id>` | 自有 `resources/` 被清空，执行一次 WebDAV 同步补齐（不再回读 Joplin） |
+| 想打开控制台 / 看 JS 报错 | 按 F12 或 Ctrl+Shift+I，弹出 WebView2 的 DevTools 独立窗口（与 Electron 的 devtools 同形态）。release 版靠 `tauri` 的 `devtools` feature 加窗口配置 `devtools: true` 启用；需要连 `edge://inspect` 时再加 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222` |
 
 日志文件是追加写入的，每次启动会新增一组，便于对比。同步开始/结束也会写入：
 
