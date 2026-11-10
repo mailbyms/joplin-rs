@@ -9,7 +9,7 @@
   --border-soft: #e9eef6;
   --text: #1f2733;
   --text-soft: #5b6675;
-  --text-faint: #96a1b0;
+  --text-faint: #69717c;
   --accent: #1d4ed8;
   --accent-soft: #e3ecfb;
   --green: #4c8b5a;
@@ -17,7 +17,7 @@
   /* Source-mode token palette (see MarkdownEditor.tsx / Textus's
      source-highlight.ts). Keeping the colours here lets the editor theme it. */
   --src-heading: #1d4ed8;
-  --src-marker: #96a1b0;
+  --src-marker: #69717c;
   --src-strong: #16368f;
   --src-emphasis: #2f6fbf;
   --src-quote: #67707d;
@@ -278,7 +278,12 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-soft
 
 /* ---------- wysiwyg (Milkdown / ProseMirror) ---------- */
 .wysiwyg-wrap { height: 100%; display: flex; flex-direction: column; min-height: 0; }
-.wysiwyg-host { flex: 1; min-height: 0; overflow: auto; background: var(--bg); }
+/* Crepe keeps the block handle at an inline `left: -48px`, measured from the
+   editing surface's own left edge — not from the centred text column. Without a
+   gutter the scroller clipped its left half (only 18px of the 66px handle stayed
+   visible), which read as the note list covering it. Reserving the gutter on
+   both sides keeps the text column optically centred at any window width. */
+.wysiwyg-host { flex: 1; min-height: 0; overflow: auto; background: var(--bg); padding: 0 48px; }
 .wysiwyg-notice { flex: 0 0 auto; display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: var(--accent-soft); color: #16368f; font-size: 12px; line-height: 1.5; }
 .wysiwyg-notice span { flex: 1; }
 .wysiwyg-notice button { flex: 0 0 auto; color: var(--accent); font-size: 12px; text-decoration: underline; }
