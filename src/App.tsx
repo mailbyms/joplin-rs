@@ -214,39 +214,61 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchInput, bootstrap?.ok]);
 
+  // Writes are serialised through this chain. Without it, clicking note B and
+  // straight back to A let the second `openNote` read the database while A's
+  // write was still in flight: the editor got the pre-edit body, `dirty` was
+  // already false, and the next keystroke saved that stale body back — the edit
+  // silently vanished. `flushSave` now returns the pending write when there is
+  // nothing new to save, so `openNote` only reads after it landed.
+  const saveChain = useRef<Promise<void>>(Promise.resolve());
+
   const flushSave = useCallback(
     async (explicit?: Note) => {
       const note = explicit ?? activeRef.current;
-      if (!note || !dirtyRef.current) return;
+      if (!note || !dirtyRef.current) return saveChain.current;
+      // Snapshot now: `activeRef` may move on to another note before the write
+      // runs, and the debounce timer passes its own (newer) snapshot in.
+      const snapshot = { id: note.id, title: note.title, body: note.body };
       dirtyRef.current = false;
       setStatus("saving");
-      try {
-        await api.saveNote(note.id, note.title, note.body);
-        // The backend bumped updated_time; mirror it so the header stamp
-        // reflects the save without waiting for a re-open.
-        if (activeRef.current?.id === note.id) {
-          activeRef.current = { ...activeRef.current, updatedTime: Date.now() };
-          setActiveNote(activeRef.current);
+      const write = saveChain.current.then(async () => {
+        try {
+          await api.saveNote(snapshot.id, snapshot.title, snapshot.body);
+          // The backend bumped updated_time; mirror it so the header stamp
+          // reflects the save without waiting for a re-open.
+          if (activeRef.current?.id === snapshot.id) {
+            activeRef.current = { ...activeRef.current, updatedTime: Date.now() };
+            setActiveNote(activeRef.current);
+          }
+          setStatus("saved");
+          await refreshNotes();
+        } catch (e) {
+          dirtyRef.current = true;
+          setStatus("dirty");
+          setError(String(e));
         }
-        setStatus("saved");
-        await refreshNotes();
-      } catch (e) {
-        dirtyRef.current = true;
-        setStatus("dirty");
-        setError(String(e));
-      }
+      });
+      saveChain.current = write;
+      await write;
     },
     [refreshNotes],
   );
 
+  // A note switch is two async round-trips; the second click must win even if
+  // the first one resolves last.
+  const openTicket = useRef(0);
+
   const openNote = useCallback(
     async (id: string) => {
+      const ticket = ++openTicket.current;
+      // Never read before the previous note's edit has been written.
       await flushSave();
       try {
         const [note, html] = await Promise.all([
           api.getNote(id),
           api.renderNote(id),
         ]);
+        if (ticket !== openTicket.current) return;
         activeRef.current = note;
         setActiveNote(note);
         setRendered(html);
@@ -587,8 +609,11 @@ export default function App() {
       if (!mod) return;
       const key = event.key.toLowerCase();
       if (key === "s") {
+        // Same action as the sidebar's sync button, but write the open note
+        // first: a sync pushes the local database, so unsaved edits would be
+        // left behind (or worse, conflict with the pushed copy).
         event.preventDefault();
-        void flushSave();
+        void flushSave().then(() => syncFromSidebar());
       } else if (key === "n") {
         event.preventDefault();
         void newNote();
@@ -925,7 +950,7 @@ export default function App() {
               </dd>
             </dl>
             <p className="modal-hint">
-              快捷键：Ctrl+N 新建 · Ctrl+S 保存 · Ctrl+F 搜索 · Ctrl+E 切换源码 / 打字机
+              快捷键：Ctrl+N 新建 · Ctrl+S 保存并同步 · Ctrl+F 搜索 · Ctrl+E 切换源码 / 打字机
               <br />
               右键笔记卡片：导出为 PDF · 删除笔记
             </p>

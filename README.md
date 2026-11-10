@@ -102,7 +102,7 @@ Textus 的 README 原文：*"A window takes about 110 MB, and each further windo
 - 源码 / 打字机两种视图（Ctrl+E 切换，「视图」菜单可直达）
 - 新建笔记 / 新建笔记本 / 重命名 / 软删除
 - 关于面板（显示「数据源：WebDAV（唯一来源）」、数据目录与上次同步时间）
-- 快捷键：Ctrl+N 新建 · Ctrl+S 保存 · Ctrl+F 搜索 · Ctrl+E 切换源码 / 打字机 · F12 / Ctrl+Shift+I 开发者工具
+- 快捷键：Ctrl+N 新建 · Ctrl+S 保存并同步 · Ctrl+F 搜索 · Ctrl+E 切换源码 / 打字机 · F12 / Ctrl+Shift+I 开发者工具
 - 原生菜单栏：文件 / 视图 / 工具 / 帮助；菜单事件经 `menu://action` 转发到前端
 - **WebDAV 同步**：同步设置、连接测试、预演（dry-run）、立即同步、自动同步、进度与结果
 - 应用自包含数据目录（`paths.rs` 统一路径，附件只来自 WebDAV，支持 `JOPLIN_RS_DATA_DIR` 覆盖）
