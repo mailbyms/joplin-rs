@@ -105,6 +105,20 @@ export interface RoundTripIssue {
 }
 
 /**
+ * What counts as raw HTML: `<!--`, `<!DOCTYPE`, or a real tag — `<` + name +
+ * (space | `/` | `>`). The shape matters: `<https://…>` and `<user@host>` are
+ * Markdown autolinks, which remark parses to a link and serialises back
+ * unchanged, so treating them as HTML locked dozens of perfectly safe notes
+ * into read-only. A tag name is followed by `:` or `@` in those, never by
+ * whitespace, a slash or `>`.
+ *
+ * The `(?<!\\)` skips escaped brackets (`\<VirtualHost …\>`), which are literal
+ * text in Markdown — Apache/nginx config snippets in notes are usually written
+ * that way and are not HTML at all.
+ */
+const HTML_TAG = /(?<!\\)(?:<!--|<![A-Za-z]|<\/?[A-Za-z][A-Za-z0-9-]*(?=[\s/>]))/;
+
+/**
  * Milkdown parses Markdown with remark and serialises it back, which rewrites
  * formatting. Cosmetic rewriting is fine, but silently dropping content is not:
  * the result would be saved to SQLite and then propagated to every other device
@@ -115,7 +129,7 @@ export function unsafeRoundTrip(src: string, round: string): RoundTripIssue | nu
     return { reason: "YAML front matter", line: 1 };
   }
   const masked = maskCode(src);
-  const html = /<[a-zA-Z!/][^>]*>/.exec(masked);
+  const html = HTML_TAG.exec(masked);
   if (html) {
     return { reason: "原始 HTML", line: lineOf(masked, html.index) };
   }
