@@ -74,15 +74,34 @@ interface Props {
 
 const JOPLIN_LINK = /^:\/([0-9a-fA-F]{32})$/;
 
-function withoutCode(src: string): string {
+/**
+ * Blanks fenced blocks and inline code **in place** — every character becomes a
+ * space but line breaks stay — so a match offset in the result still maps back
+ * to the line the user sees in 源码 mode. (`unsafeRoundTrip` used to strip code
+ * out entirely, which was fine for a yes/no answer but lost the position.)
+ */
+function maskCode(src: string): string {
+  const blank = (m: string) => m.replace(/[^\n]/g, " ");
   return src
-    .replace(/```[\s\S]*?```/g, "")
-    .replace(/~~~[\s\S]*?~~~/g, "")
-    .replace(/`[^`\n]*`/g, "");
+    .replace(/```[\s\S]*?```/g, blank)
+    .replace(/~~~[\s\S]*?~~~/g, blank)
+    .replace(/`[^`\n]*`/g, blank);
+}
+
+/** 1-based line number of `index` inside `text`. */
+function lineOf(text: string, index: number): number {
+  return text.slice(0, index).split("\n").length;
 }
 
 function joplinIds(src: string): string {
   return (src.match(/:\/[0-9a-fA-F]{32}/g) ?? []).sort().join(",");
+}
+
+export interface RoundTripIssue {
+  /** What the 打字机 view cannot preserve, e.g. "原始 HTML". */
+  reason: string;
+  /** 1-based source line when the culprit is locatable, 0 otherwise. */
+  line: number;
 }
 
 /**
@@ -91,15 +110,17 @@ function joplinIds(src: string): string {
  * the result would be saved to SQLite and then propagated to every other device
  * over WebDAV. Refuse to write back whenever a round-trip loses anything.
  */
-export function unsafeRoundTrip(src: string, round: string): string | null {
+export function unsafeRoundTrip(src: string, round: string): RoundTripIssue | null {
   if (/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/.test(src)) {
-    return "YAML front matter";
+    return { reason: "YAML front matter", line: 1 };
   }
-  if (/<[a-zA-Z!/][^>]*>/.test(withoutCode(src))) {
-    return "原始 HTML";
+  const masked = maskCode(src);
+  const html = /<[a-zA-Z!/][^>]*>/.exec(masked);
+  if (html) {
+    return { reason: "原始 HTML", line: lineOf(masked, html.index) };
   }
   if (joplinIds(src) !== joplinIds(round)) {
-    return "Joplin 附件或内部笔记链接";
+    return { reason: "Joplin 附件或内部笔记链接", line: 0 };
   }
   // remark escaping and list normalisation usually make the text slightly
   // LONGER, which is harmless. Only a substantial shrink means nodes were
@@ -107,9 +128,16 @@ export function unsafeRoundTrip(src: string, round: string): string | null {
   // positives on notes with tables or long link URLs.
   const loss = src.length - round.length;
   if (loss > Math.max(200, src.length * 0.25)) {
-    return "部分内容";
+    return { reason: "部分内容", line: 0 };
   }
   return null;
+}
+
+/** The banner text. A locatable issue names the line so 源码 mode can jump to it. */
+export function readonlyNotice(issue: RoundTripIssue): string {
+  return issue.line > 0
+    ? `此笔记第 ${issue.line} 行含${issue.reason}，已设为只读以保护原文。请用「源码」模式编辑。`
+    : `此笔记含${issue.reason}，打字机视图无法无损还原，已设为只读以保护原文。请用「源码」模式编辑。`;
 }
 
 /**
@@ -240,11 +268,9 @@ export default function WysiwygEditor({
 
     const afterCreate = () => {
       const round = crepe.getMarkdown();
-      const reason = unsafeRoundTrip(value, round);
-      if (reason) {
-        setNotice(
-          `此笔记含${reason}，打字机视图无法无损还原，已设为只读以保护原文。请用「源码」模式编辑。`,
-        );
+      const issue = unsafeRoundTrip(value, round);
+      if (issue) {
+        setNotice(readonlyNotice(issue));
         crepe.setReadonly(true);
       } else {
         if (round.replace(/\r\n/g, "\n").trim() !== value.replace(/\r\n/g, "\n").trim()) {
