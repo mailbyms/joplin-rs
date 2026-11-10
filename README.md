@@ -154,6 +154,22 @@ gzip 138 KB 的 ProseMirror + remark 共享 chunk），只在首次切到打字�
 **已知差异**：打字机由 remark 渲染，字数 / 大纲由 Rust `pulldown-cmark` 计算（不再挂载
 独立预览视图）；公式与 Mermaid 暂不支持可视化编辑。
 
+**Markdown 排版**：以 Typora 的 `github.css` 为参考 —— 正文 16px / 1.6 / `#333`，
+h1 2.25em、h2 1.75em 且都带 1px `#eee` 下划线，h3 1.5em…h6 1em，列表 30px 缩进，
+引用 4px `#dfe2e5` 左边框 + `#777` 文字，表格 1px `#dfe2e5` 细边框、表头与隔行
+`#f8f8f8` 底色、单元格左对齐，行内代码与代码块统一 `#f8f8f8` 底 + 3px 圆角。
+这套规则用 `:is()` 同时命中打字机（`.wysiwyg-host .milkdown .ProseMirror`）、预览和
+打印（`.markdown-body`），所以同一篇笔记在编辑区、导出 PDF 里长得一样。
+
+覆盖 Crepe 时有两个坑：组件样式是**懒加载后才注入**的（样式表排在 `styles.css` 之后），
+同特异性一定输，必须用 `:is()` 前缀把特异性抬到 (0,3,x) 以上；另外它的段落是
+`line-height:1.5; padding:4px 0`、列表项文字包在 `.children > .content-dom > p` 里、
+表格边框用 `color-mix()` 计算，这三处都要单独对着真实 DOM 结构覆盖，否则会出现
+列表被撑开、段落行高回落到 1.5。围栏代码块是 CodeMirror 实例，Crepe 默认不给主题，
+token 会落回深色编辑器的浅灰配色（在白纸上几乎看不见），因此通过
+`featureConfigs[Crepe.Feature.CodeMirror].theme` 传入一套 GitHub 配色的
+`EditorView.theme` + `HighlightStyle`（`WysiwygEditor.tsx`）。
+
 ## 界面：深蓝科技主题与新图标
 
 - 配色仍是原来的**浅色底**（同样的亮度、留白与文字对比度），只把橙 / 暖棕这一族颜色整体换成
@@ -161,6 +177,11 @@ gzip 138 KB 的 ProseMirror + remark 共享 chunk），只在首次切到打字�
   （`--bg #fdfeff`、`--bg-side #f1f4fa`、`--border #dde4ee`）。`styles.css` 的 `:root`
   集中定义，CodeMirror 与 Milkdown 的 `--crepe-*` / `--src-*` 变量都从这里取值。
 - 顶栏整体移除，界面只剩三栏：左侧导航、笔记列表、编辑区。
+- **侧栏是界面里唯一的深色表面**（`#1b202a`，底部 `#171c25`）：它把笔记本树从浅色正文里
+  框出来，又不把编辑区拖进暗色主题。「只改侧栏」是靠就地重声明语义变量实现的 ——
+  `.sidebar` 上覆盖 `--text` / `--text-soft` / `--text-faint` / `--bg-hover` / `--bg-active` /
+  `--accent`，子树里的规则本来就只引用这些 token，作用域一收就只影响侧栏；滚动条滑块单独
+  调亮（`rgba(255,255,255,.16)`），否则浅色主题的 `#ccd4df` 滑块在深底上等于消失。
 - 笔记列表头部只有「搜索框 + ＋ 新建笔记」：原先的「＋ 新建笔记」大按钮从侧栏顶部搬到了这里，
   笔记本名与笔记数量那两行文字已删除（当前笔记本由侧栏高亮表示）。
 - 侧栏「同步」按钮带一个刷新图标（同步中旋转），**点击直接触发后台同步**，不再弹对话框；
@@ -348,9 +369,9 @@ Runtime.exceptionThrown = []
 深蓝主题改为「浅色底 + 深蓝强调」后的复验（release exe + CDP，真实笔记只读）：
 
 ```
-表面色   bg #fdfeff / sidebar #f1f4fa / list #f7f9fd / topbar #fdfeff
-正文     #1f2733，对 bg 对比度 14.89（原暖色主题 13.43，只升不降）
-强调     #1d4ed8，主按钮白字对比度 6.70；侧栏选中 #16368f on #dde8fa = 8.68
+表面色   bg #fdfeff / sidebar #1b202a（暗）/ list #f7f9fd / 侧栏底部 #171c25
+正文     #333 on #fdfeff，对比度 12.5；侧栏文字 #a7b2c2 on #1b202a，对比度 7.6
+强调     #1d4ed8，主按钮白字对比度 6.70；侧栏选中 #d8e6ff on rgba(96,148,245,.22) = 9.1
 视图     ["源码", "打字机"]，active 为白底蓝字
 对话框   同步设置 bg #fdfeff / text #1f2733 / 主按钮 #1d4ed8
 ```

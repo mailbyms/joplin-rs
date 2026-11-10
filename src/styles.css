@@ -82,7 +82,25 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-soft
 .main-row { flex: 1; display: flex; min-height: 0; }
 
 /* ---------- sidebar ---------- */
-.sidebar { width: 232px; flex: 0 0 232px; background: var(--bg-rail); border-right: 1px solid #d4deec; display: flex; flex-direction: column; }
+/* The sidebar is the one dark surface in an otherwise light window — it frames
+   the notebook tree without dragging the editor into a dark theme. Child rules
+   already resolve through the shared tokens, so re-declaring them here scopes
+   the dark palette to this subtree and nothing else. */
+.sidebar {
+  width: 232px; flex: 0 0 232px; display: flex; flex-direction: column;
+  background: #1b202a; border-right: 1px solid #0d1118;
+  --text: #e7ecf4;
+  --text-soft: #a7b2c2;
+  --text-faint: #7b8697;
+  --bg-hover: rgba(255, 255, 255, .07);
+  --bg-active: rgba(96, 148, 245, .22);
+  --accent: #7ea9ff;
+  color: var(--text);
+}
+/* The global scrollbar is tuned for light surfaces; on the dark rail it needs
+   a lighter thumb or it disappears. */
+.sidebar ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, .16); background-clip: padding-box; }
+.sidebar ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, .28); background-clip: padding-box; }
 .primary-btn { width: 100%; padding: 8px 14px; background: var(--accent); color: #fff; border-radius: 7px; font-weight: 600; font-size: 13px; }
 .primary-btn:hover { background: #1a3fbd; }
 .primary-btn:disabled { opacity: .5; box-shadow: none; }
@@ -93,8 +111,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-soft
   width: 100%; display: flex; align-items: center; gap: 7px; padding: 6px 10px;
   border-radius: 6px; color: var(--text-soft); font-size: 13px; text-align: left; min-height: 30px;
 }
-.sidebar .nav-item:hover { background: rgba(29, 78, 216, .08); color: var(--text); }
-.nav-item.active { background: #d3e1f8; color: #16368f; font-weight: 600; }
+.sidebar .nav-item:hover { background: var(--bg-hover); color: var(--text); }
+.sidebar .nav-item.active { background: var(--bg-active); color: #d8e6ff; font-weight: 600; }
 /* A note card is hovering over this notebook. */
 .nav-item.drop-target {
   background: var(--bg-active); color: var(--accent);
@@ -112,15 +130,15 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-soft
 /* Sidebar footer: the only entry point left for WebDAV sync, plus a rolling
    ticker of the latest sync milestones ("已获取条目：1/1。已完成"). */
 .sidebar-foot {
-  flex: 0 0 auto; padding: 7px 8px 8px 10px; border-top: 1px solid #d4deec;
-  background: var(--bg-rail);
+  flex: 0 0 auto; padding: 7px 8px 8px 10px; border-top: 1px solid rgba(255, 255, 255, .08);
+  background: #171c25;
 }
 .foot-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .foot-btn {
   display: inline-flex; align-items: center; gap: 6px; padding: 5px 8px;
   border-radius: 6px; font-size: 12.5px; color: var(--text-soft); flex: 0 0 auto;
 }
-.foot-btn:hover { background: rgba(29, 78, 216, .08); color: var(--text); }
+.foot-btn:hover { background: var(--bg-hover); color: var(--text); }
 .foot-sync { font-weight: 600; }
 .foot-sync.busy { color: var(--accent); }
 .foot-sync.unconfigured { color: var(--text-faint); }
@@ -280,17 +298,17 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-soft
   --crepe-color-on-secondary: #16368f;
   --crepe-color-inverse: #14213a;
   --crepe-color-on-inverse: #fdfeff;
-  --crepe-color-inline-code: #16368f;
+  --crepe-color-inline-code: #333;
   --crepe-color-error: #b23b2e;
   --crepe-color-hover: var(--bg-hover);
   --crepe-color-selected: var(--bg-active);
   --crepe-color-inline-area: #e6edf9;
   --crepe-shadow-1: 0 4px 14px rgba(23, 37, 84, .14);
   --crepe-shadow-2: 0 8px 26px rgba(23, 37, 84, .18);
-  --crepe-font-title: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
-  --crepe-font-default: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --crepe-font-title: "Open Sans", "Clear Sans", "Helvetica Neue", "Microsoft YaHei", sans-serif;
+  --crepe-font-default: "Open Sans", "Clear Sans", "Helvetica Neue", "Microsoft YaHei", sans-serif;
   --crepe-font-code: "Cascadia Code", Consolas, monospace;
-  --crepe-base-font-size: 15px;
+  --crepe-base-font-size: 16px;
   position: relative;
   min-height: 100%;
   border: 0;
@@ -307,10 +325,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-soft
   outline: none !important;
   box-shadow: none !important;
 }
-.wysiwyg-host .milkdown .ProseMirror { max-width: 780px; margin: 0 auto; padding: 20px 34px 140px; min-height: 60vh; line-height: 1.85; color: var(--text); }
-.wysiwyg-host .milkdown .ProseMirror img { max-width: 100%; }
-.wysiwyg-host .milkdown .ProseMirror a { color: var(--accent); }
-.wysiwyg-host .milkdown .ProseMirror code { color: #16368f; }
+.wysiwyg-host .milkdown .ProseMirror { padding: 30px 34px 120px; min-height: 60vh; }
 /* Floating widgets are absolutely positioned against .milkdown. These rules
    also act as a safety net if the component stylesheet ever fails to load. */
 .wysiwyg-host .milkdown .milkdown-toolbar,
@@ -333,33 +348,114 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-soft
 }
 
 /* ---------- preview ---------- */
-.preview-scroll { position: relative; height: 100%; overflow-y: auto; padding: 20px 34px 120px; }
+.preview-scroll { position: relative; height: 100%; overflow-y: auto; padding: 30px 34px 120px; }
 .preview-empty { height: 100%; display: flex; align-items: center; justify-content: center; color: var(--text-faint); }
-.markdown-body { max-width: 780px; margin: 0 auto; font-size: 15px; line-height: 1.85; color: #232a35; }
-.markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4 { line-height: 1.4; margin: 1.6em 0 .6em; font-weight: 680; color: #141c28; scroll-margin-top: 20px; }
-.markdown-body h1 { font-size: 1.9em; border-bottom: 1px solid var(--border); padding-bottom: .3em; }
-.markdown-body h2 { font-size: 1.5em; }
-.markdown-body h3 { font-size: 1.24em; }
-.markdown-body h4 { font-size: 1.08em; }
-.markdown-body p { margin: .75em 0; }
-.markdown-body a { color: var(--accent); text-decoration: none; border-bottom: 1px solid #a9c4ee; }
-.markdown-body a:hover { border-bottom-color: var(--accent); }
-.markdown-body strong { color: #101822; }
-.markdown-body blockquote { margin: 1em 0; padding: 4px 16px; border-left: 3px solid #a9c4ee; background: #f4f8ff; color: var(--text-soft); }
-.markdown-body blockquote p { margin: .35em 0; }
-.markdown-body code { font-family: "Cascadia Code", Consolas, monospace; font-size: .88em; background: #eef3fb; padding: 2px 5px; border-radius: 4px; color: #16368f; }
-.markdown-body pre { background: #f4f7fc; border: 1px solid var(--border-soft); border-radius: 8px; padding: 14px 16px; overflow-x: auto; line-height: 1.6; }
-.markdown-body pre code { background: none; padding: 0; color: #2b333f; font-size: .87em; }
-.markdown-body img { max-width: 100%; border-radius: 6px; margin: .5em 0; }
+
+/* ---------- markdown typography ----------
+   Reference: Typora's `github.css`. 16px/1.6 body in #333, h1/h2 underlined,
+   lists at 30px, 4px quote rules, #f8f8f8 code and zebra tables. One set of
+   rules covers the WYSIWYG surface, the preview pane and the print sheet, so a
+   note reads the same no matter which one renders it. */
+.markdown-body,
+.wysiwyg-host .milkdown .ProseMirror {
+  max-width: 860px; margin: 0 auto;
+  font-family: "Open Sans", "Clear Sans", "Helvetica Neue", Helvetica, Arial,
+    "Segoe UI Emoji", "Microsoft YaHei", sans-serif;
+  font-size: 16px; line-height: 1.6; color: #333;
+}
+:is(.markdown-body, .wysiwyg-host .milkdown .ProseMirror) :is(h1, h2, h3, h4, h5, h6) {
+  margin: 24px 0 14px; font-weight: 700; line-height: 1.4; color: #333;
+  scroll-margin-top: 20px;
+}
+:is(.markdown-body, .wysiwyg-host .milkdown .ProseMirror) h1 {
+  font-size: 2.25em; line-height: 1.2; padding-bottom: .3em; border-bottom: 1px solid #eee;
+}
+:is(.markdown-body, .wysiwyg-host .milkdown .ProseMirror) h2 {
+  font-size: 1.75em; line-height: 1.225; padding-bottom: .3em; border-bottom: 1px solid #eee;
+}
+:is(.markdown-body, .wysiwyg-host .milkdown .ProseMirror) h3 { font-size: 1.5em; line-height: 1.43; }
+:is(.markdown-body, .wysiwyg-host .milkdown .ProseMirror) h4 { font-size: 1.25em; }
+:is(.markdown-body, .wysiwyg-host .milkdown .ProseMirror) h5 { font-size: 1em; }
+:is(.markdown-body, .wysiwyg-host .milkdown .ProseMirror) h6 { font-size: 1em; color: #777; }
+
+:is(.markdown-body, .wysiwyg-host .milkdown .ProseMirror) :is(blockquote, ul, ol, dl) { margin: .8em 0; }
+/* Crepe gives paragraphs `line-height: 1.5` and 4px of vertical padding of its
+   own; the reference theme wants 1.6 and margins only. */
+:is(.markdown-body, .wysiwyg-host .milkdown .ProseMirror) p {
+  margin: .8em 0; padding: 0; line-height: 1.6;
+}
+/* Crepe wraps every list item's text in `.children > .content-dom > p`, so the
+   body margin would double-space the list; give the first paragraph no margin
+   and separate any extra ones just enough to read. */
+:is(.markdown-body, .wysiwyg-host .milkdown .ProseMirror) :is(li > p, li .content-dom > p) { margin: 0; }
+:is(.markdown-body, .wysiwyg-host .milkdown .ProseMirror) li .content-dom > p + p { margin-top: .4em; }
+:is(.markdown-body, .wysiwyg-host .milkdown .ProseMirror) :is(ul, ol) { padding-left: 30px; }
+:is(.markdown-body, .wysiwyg-host .milkdown .ProseMirror) li > :is(ul, ol) { margin: 0; }
+:is(.markdown-body, .wysiwyg-host .milkdown .ProseMirror) li { margin: .15em 0; }
+
+:is(.markdown-body, .wysiwyg-host .milkdown .ProseMirror) a { color: #4183c4; text-decoration: none; }
+:is(.markdown-body, .wysiwyg-host .milkdown .ProseMirror) a:hover { text-decoration: underline; }
+:is(.markdown-body, .wysiwyg-host .milkdown .ProseMirror) strong { font-weight: 700; color: inherit; }
+
+:is(.markdown-body, .wysiwyg-host .milkdown .ProseMirror) blockquote {
+  margin: .8em 0; padding: 0 15px; border-left: 4px solid #dfe2e5;
+  color: #777; background: none;
+}
+:is(.markdown-body, .wysiwyg-host .milkdown .ProseMirror) blockquote > :first-child { margin-top: 0; }
+:is(.markdown-body, .wysiwyg-host .milkdown .ProseMirror) blockquote > :last-child { margin-bottom: 0; }
+
+:is(.markdown-body, .wysiwyg-host .milkdown .ProseMirror) code {
+  font-family: "Cascadia Code", Consolas, monospace; font-size: .9em;
+  background: #f3f4f4; border: 1px solid #e7eaed; border-radius: 3px;
+  padding: .1em .3em; color: #333;
+}
+:is(.markdown-body, .wysiwyg-host .milkdown .ProseMirror) pre {
+  margin: .9em 0; padding: 12px 14px; background: #f8f8f8;
+  border: 1px solid #e7eaed; border-radius: 3px; overflow-x: auto; line-height: 1.55;
+}
+:is(.markdown-body, .wysiwyg-host .milkdown .ProseMirror) pre code {
+  background: none; border: 0; padding: 0; font-size: .9em; color: #333;
+}
+
+:is(.markdown-body, .wysiwyg-host .milkdown .ProseMirror) :is(table) {
+  margin: .9em 0; border-collapse: collapse; width: 100%;
+}
+:is(.markdown-body, .wysiwyg-host .milkdown .ProseMirror) :is(th, td) {
+  border: 1px solid #dfe2e5; padding: 6px 13px; text-align: left;
+}
+:is(.markdown-body, .wysiwyg-host .milkdown .ProseMirror) thead th { font-weight: 600; }
+:is(.markdown-body, .wysiwyg-host .milkdown .ProseMirror) :is(thead, tbody tr:nth-child(2n)) {
+  background: #f8f8f8;
+}
+
+:is(.markdown-body, .wysiwyg-host .milkdown .ProseMirror) hr {
+  height: 2px; padding: 0; margin: 18px 0; background: #e7e7e7; border: 0; overflow: hidden;
+}
+:is(.markdown-body, .wysiwyg-host .milkdown .ProseMirror) img { max-width: 100%; }
 .markdown-body img[data-resource]:not([src]) { min-height: 24px; }
-.markdown-body table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: .93em; }
-.markdown-body th, .markdown-body td { border: 1px solid var(--border); padding: 7px 11px; text-align: left; }
-.markdown-body th { background: var(--bg-side); font-weight: 650; }
-.markdown-body ul, .markdown-body ol { padding-left: 1.6em; margin: .7em 0; }
-.markdown-body li { margin: .25em 0; }
 .markdown-body li input[type="checkbox"] { margin-right: 6px; accent-color: var(--accent); }
-.markdown-body hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
 .markdown-body .footnotes { font-size: .88em; color: var(--text-soft); border-top: 1px solid var(--border); margin-top: 2em; }
+
+/* Crepe's code block is a CodeMirror instance themed for One Dark: its tokens
+   stay colourful, but the *base* text colour is a light grey that vanishes on a
+   white page. Paint the block like the reference theme and darken the base. */
+.wysiwyg-host .milkdown .milkdown-code-block {
+  margin: .9em 0; padding: 10px 14px; border: 1px solid #e7eaed; border-radius: 3px;
+  background: #f8f8f8;
+}
+.wysiwyg-host .milkdown .milkdown-code-block .cm-editor { background: transparent; }
+.wysiwyg-host .milkdown .milkdown-code-block .cm-gutters {
+  background: transparent; color: #b3bac5; border-right: 0;
+}
+.wysiwyg-host .milkdown .milkdown-code-block :is(.cm-content, .cm-line) { color: #24292e; }
+.wysiwyg-host .milkdown .milkdown-code-block .cm-scroller {
+  font-family: "Cascadia Code", Consolas, monospace; font-size: 13.5px; line-height: 1.55;
+}
+/* Same for the table widget, whose default borders are colour-mixed greys. */
+.wysiwyg-host .milkdown .milkdown-table-block :is(th, td) {
+  border: 1px solid #dfe2e5; padding: 6px 13px; text-align: left;
+}
+.wysiwyg-host .milkdown .milkdown-table-block thead th { background: #f8f8f8; font-weight: 600; }
 .outline { position: absolute; right: 14px; top: 20px; width: 168px; max-height: calc(100% - 50px); overflow-y: auto; border-left: 1px solid var(--border); padding-left: 10px; font-size: 11px; }
 .outline-title { color: var(--text-faint); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
 .outline-item { display: block; width: 100%; text-align: left; padding: 2px 0; color: var(--text-faint); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

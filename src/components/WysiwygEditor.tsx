@@ -19,7 +19,44 @@ import "@milkdown/crepe/theme/common/toolbar.css";
 import "@milkdown/crepe/theme/common/table.css";
 import "@milkdown/crepe/theme/common/top-bar.css";
 import "@milkdown/crepe/theme/classic.css";
+import { EditorView } from "@codemirror/view";
+import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { tags } from "@lezer/highlight";
 import { api } from "../api";
+
+/** Fenced code blocks are CodeMirror instances, and Crepe ships them unthemed:
+ *  the tokens fall back to a dark-editor palette that is unreadable on the
+ *  light page the notes are rendered on. This is GitHub's code palette, which
+ *  is what the rest of the typography follows (see `github.css`). */
+const codeSurfaceTheme = EditorView.theme(
+  {
+    "&": { color: "#24292e", backgroundColor: "transparent" },
+    ".cm-content": { caretColor: "#044289" },
+    ".cm-gutters": { backgroundColor: "transparent", color: "#b3bac5", border: "none" },
+    ".cm-activeLine": { backgroundColor: "transparent" },
+    ".cm-activeLineGutter": { backgroundColor: "transparent" },
+    "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection": {
+      backgroundColor: "#cbe3ff",
+    },
+  },
+  { dark: false },
+);
+
+const codeSyntax = HighlightStyle.define([
+  { tag: [tags.keyword, tags.modifier, tags.operatorKeyword, tags.controlKeyword], color: "#d73a49" },
+  { tag: [tags.string, tags.special(tags.string), tags.regexp], color: "#032f62" },
+  { tag: [tags.comment, tags.lineComment, tags.blockComment], color: "#6a737d", fontStyle: "italic" },
+  { tag: [tags.number, tags.bool, tags.null, tags.atom], color: "#005cc5" },
+  { tag: [tags.function(tags.variableName), tags.function(tags.propertyName)], color: "#6f42c1" },
+  { tag: [tags.typeName, tags.className, tags.namespace, tags.attributeName], color: "#6f42c1" },
+  { tag: [tags.tagName], color: "#22863a" },
+  { tag: [tags.propertyName, tags.variableName], color: "#24292e" },
+  { tag: [tags.heading], color: "#005cc5", fontWeight: "bold" },
+  { tag: [tags.link, tags.url], color: "#032f62" },
+  { tag: [tags.emphasis], fontStyle: "italic" },
+  { tag: [tags.strong], fontWeight: "bold" },
+  { tag: [tags.meta, tags.punctuation, tags.operator, tags.bracket], color: "#24292e" },
+]);
 
 interface Props {
   value: string;
@@ -106,6 +143,11 @@ export default function WysiwygEditor({
       features: {
         [Crepe.Feature.AI]: false,
         [Crepe.Feature.Latex]: false,
+      },
+      featureConfigs: {
+        [Crepe.Feature.CodeMirror]: {
+          theme: [codeSurfaceTheme, syntaxHighlighting(codeSyntax)],
+        },
       },
     });
 
