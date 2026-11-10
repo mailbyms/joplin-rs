@@ -109,7 +109,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-soft
 .sidebar-scroll { flex: 1; overflow-y: auto; padding: 12px 8px 20px; }
 .nav-item {
   width: 100%; display: flex; align-items: center; gap: 7px; padding: 6px 10px;
-  border-radius: 6px; color: var(--text-soft); font-size: 13px; text-align: left; min-height: 30px;
+  border-radius: 6px; color: var(--text-faint); font-size: 13px; text-align: left; min-height: 30px;
 }
 .sidebar .nav-item:hover { background: var(--bg-hover); color: var(--text); }
 .sidebar .nav-item.active { background: var(--bg-active); color: #ffffff; font-weight: 600; }
@@ -491,6 +491,11 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-soft
   margin: .8em 0; padding: 0 15px; border-left: 4px solid #dfe2e5;
   color: #777; background: none;
 }
+/* Crepe draws the quote rule as an absolutely positioned `::before` bar sitting
+   at the padding edge, so it lands right next to the border above and the two
+   read as a doubled line (its colour is --crepe-color-selected, a pale blue on
+   top of the grey). The border is the github.css rule; drop Crepe's bar. */
+.wysiwyg-host .milkdown .ProseMirror blockquote::before { content: none; }
 :is(.markdown-body, .wysiwyg-host .milkdown .ProseMirror) blockquote > :first-child { margin-top: 0; }
 :is(.markdown-body, .wysiwyg-host .milkdown .ProseMirror) blockquote > :last-child { margin-bottom: 0; }
 
