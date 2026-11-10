@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { inertResources, loadResources } from "../resources";
+import type { PdfHeading } from "../types";
 
 export interface PrintJob {
   title: string;
@@ -13,25 +14,56 @@ export interface PrintJob {
 interface Props {
   job: PrintJob;
   /** Called once the sheet is laid out and every attachment has decoded, i.e.
-   *  the moment it is safe to hand the page over to WebView2's printer. */
-  onReady: () => void;
+   *  the moment it is safe to hand the page over to WebView2's printer. The
+   *  headings travel with it so the PDF can be given a bookmark tree. */
+  onReady: (headings: PdfHeading[]) => void;
 }
+
+/** Anchor of the note title itself, which is rendered outside the note body. */
+const TITLE_ANCHOR = "jr-h-title";
 
 /** The whole window is replaced by this sheet while a PDF is generated: the
  *  export prints the *current DOM*, so the sheet has to be the only thing left
  *  on the page. It lives outside `.app-shell` for exactly that reason. */
 export default function PrintSheet({ job, onReady }: Props) {
   const body = useRef<HTMLDivElement>(null);
-  // A leading `# heading` that just repeats the title would print twice.
-  const html = useMemo(() => {
+
+  const { html, headings } = useMemo(() => {
     const template = document.createElement("template");
     template.innerHTML = inertResources(job.html);
+    // A leading `# heading` that just repeats the title would print twice.
     const first = template.content.firstElementChild;
     const heading = first?.textContent?.trim();
     if (first && first.tagName === "H1" && heading === job.title.trim()) {
       first.remove();
     }
-    return template.innerHTML;
+
+    // WebView2 only records a destination for anchors something actually links
+    // to, so each heading gets an id *and* a self-link wrapped around its
+    // content. The link is invisible: `.print-anchor` inherits colour and drops
+    // the underline. Rust then reads those destinations back out of the PDF
+    // (see `outline.rs`) to build the bookmark tree.
+    const found: PdfHeading[] = [];
+    template.content.querySelectorAll("h1,h2,h3,h4,h5,h6").forEach((el, index) => {
+      const text = el.textContent?.trim() ?? "";
+      if (!text) return;
+      const anchor = `jr-h-${index}`;
+      el.id = anchor;
+      // A heading that already contains a link cannot take another one (links
+      // do not nest), so it keeps the id and simply has no bookmark.
+      if (!el.querySelector("a")) {
+        el.innerHTML = `<a class="print-anchor" href="#${anchor}">${el.innerHTML}</a>`;
+      }
+      found.push({ level: Number(el.tagName.slice(1)), title: text, anchor });
+    });
+
+    const title = job.title.trim();
+    return {
+      html: template.innerHTML,
+      headings: title
+        ? [{ level: 1, title, anchor: TITLE_ANCHOR }, ...found]
+        : found,
+    };
   }, [job.html, job.title]);
 
   useEffect(() => {
@@ -43,19 +75,33 @@ export default function PrintSheet({ job, onReady }: Props) {
       await new Promise<void>((resolve) =>
         requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
       );
-      if (alive) onReady();
+      if (alive) onReady(headings);
     };
     void settle();
     return () => {
       alive = false;
     };
-  }, [html, onReady]);
+  }, [html, headings, onReady]);
+
+  // WebView2 takes the PDF's /Title from the document title; without this every
+  // export would be filed as "Joplin RS". Restored on unmount.
+  useEffect(() => {
+    const previous = document.title;
+    document.title = job.title.trim() || "无标题笔记";
+    return () => {
+      document.title = previous;
+    };
+  }, [job.title]);
 
   return createPortal(
     <div className="print-sheet" role="document" aria-label="PDF 导出预览">
       <div className="print-paper">
         <header className="print-head">
-          <h1>{job.title || "无标题笔记"}</h1>
+          <h1 id={TITLE_ANCHOR}>
+            <a className="print-anchor" href={`#${TITLE_ANCHOR}`}>
+              {job.title || "无标题笔记"}
+            </a>
+          </h1>
           <div className="print-meta">
             <span className="print-folder">
               {/* A real glyph, not 📖: emoji are not embedded as images in the

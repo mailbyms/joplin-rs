@@ -17,6 +17,7 @@ import type {
   Folder,
   Note,
   NoteSummary,
+  PdfHeading,
   RenderedNote,
   Selection,
   Stats,
@@ -122,6 +123,9 @@ export default function App() {
   // things that actually went wrong.
   const [notice, setNotice] = useState<string | null>(null);
   const printReady = useRef<(() => void) | null>(null);
+  // Filled in by the print sheet: the note's headings, in document order, for
+  // the PDF's bookmark tree.
+  const printHeadings = useRef<PdfHeading[]>([]);
 
   // Re-render once a minute so "12 分钟前" stays truthful without polling the
   // backend. Only runs while a timestamp actually exists.
@@ -346,6 +350,7 @@ export default function App() {
     async (target: NoteSummary) => {
       if (pdfBusy) return;
       setPdfBusy(true);
+      printHeadings.current = [];
       try {
         // The PDF is built from the database copy, so pending edits have to land
         // first — otherwise the export silently omits the last keystrokes.
@@ -377,7 +382,7 @@ export default function App() {
           ready,
           new Promise((resolve) => window.setTimeout(resolve, 4000)),
         ]);
-        await api.exportNotePdf(path);
+        await api.exportNotePdf(path, printHeadings.current);
         if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
         setNotice(`已导出 PDF：${path}`);
         noticeTimer.current = window.setTimeout(() => setNotice(null), 6000);
@@ -392,7 +397,8 @@ export default function App() {
     [pdfBusy, folders, flushSave],
   );
 
-  const handlePrintReady = useCallback(() => {
+  const handlePrintReady = useCallback((headings: PdfHeading[]) => {
+    printHeadings.current = headings;
     printReady.current?.();
   }, []);
 

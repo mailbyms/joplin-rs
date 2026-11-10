@@ -197,6 +197,13 @@ gzip 138 KB 的 ProseMirror + remark 共享 chunk），只在首次切到打字�
     Tauri 自带的 `print()` 又只有 macOS 支持，所以才走 COM 接口，见 `src-tauri/src/print.rs`。
     页边距（上下 20mm、左右 18mm）设在 PrintSettings 里而不是 CSS：元素的 padding 只会
     生效一次，用 CSS 做页边距会让第 2 页起紧贴纸边（踩过这个坑）。
+    打完的文件会再回收一遍，按笔记里的 `#`/`##`/`###` 生成 **PDF 书签**（侧栏大纲，可点击跳转）：
+    打印页给每个标题加一个自指锚点 `<a href="#id">`，Chromium 会把它写成 PDF 的
+    `/Dests` 条目（带页对象和 `/XYZ` 坐标），`src-tauri/src/outline.rs` 再用 lopdf
+    把这些目标拼成 `/Outlines` 树并挂到 Catalog 上（同时置 `PageMode /UseOutlines`）。
+    只有 `id` 没有链接时 Chromium 不会生成目标，所以锚点必须成对。书签生成失败不影响
+    导出——它只是增强，出错只写 `startup.log`。文档标题（PDF 属性里的 Title）也一并
+    改成笔记标题，不再统一是「Joplin RS」。
   - **删除笔记**：先弹应用内确认框，确认后走 Joplin 自己的墓碑逻辑
     （`deleted_time` + `deleted_items` + `joplin_rs_pending_deletes`），下次同步把删除推到云端，
     需要时仍可在官方客户端恢复。删的是当前打开的笔记时，编辑区自动跳到相邻的一篇。
@@ -284,7 +291,7 @@ gzip 138 KB 的 ProseMirror + remark 共享 chunk），只在首次切到打字�
 ## 验证结果
 
 ```
-cargo test --lib  →  26 passed; 0 failed
+cargo test --lib  →  30 passed; 0 failed
 npm run build       →  TypeScript 0 error, 首屏 250 KB / gzip 79 KB
                       WYSIWYG 独立 chunk 1,083 KB / gzip 342 KB（按需加载）
                       dist 3.3 MB / 124 文件（约 100 个为围栏代码块按需语言 chunk）
@@ -408,7 +415,7 @@ Rust 侧单独检查：
 ```bash
 cd src-tauri
 cargo check
-cargo test --lib          # 26 个单元测试
+cargo test --lib          # 30 个单元测试
 ```
 
 ## 故障排查

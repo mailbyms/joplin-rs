@@ -4,6 +4,7 @@ import type {
   Folder,
   Note,
   NoteSummary,
+  PdfHeading,
   RenderedNote,
   ResourceData,
   SearchHit,
@@ -48,8 +49,10 @@ export const api = {
     invoke<NoteSummary>("move_note", { id, folderId }),
   deleteNote: (id: string) => invoke<void>("delete_note", { id }),
   /** Writes whatever the window is showing to `path` — the caller puts the note
-   *  on screen first (see `PrintSheet`), so no note id is involved. */
-  exportNotePdf: (path: string) => invoke<void>("export_note_pdf", { path }),
+   *  on screen first (see `PrintSheet`), so no note id is involved. `headings`
+   *  turn into the PDF's bookmark tree. */
+  exportNotePdf: (path: string, headings: PdfHeading[]) =>
+    invoke<void>("export_note_pdf", { path, headings }),
   createFolder: (title: string, parentId: string) =>
     invoke<Folder>("create_folder", { title, parentId }),
   renameFolder: (id: string, title: string) =>

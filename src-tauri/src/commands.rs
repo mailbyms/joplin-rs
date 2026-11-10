@@ -243,19 +243,36 @@ pub fn delete_note(state: State<'_, AppState>, id: String) -> Result<()> {
 /// note, so no note id is needed here: the DOM *is* the document. Rendering and
 /// file output both happen inside WebView2 (see `print.rs`), which keeps the
 /// text selectable instead of rasterising a screenshot.
+///
+/// `headings` carries the note's headings in document order; once the file
+/// exists it is reopened and given a bookmark tree (see `outline.rs`).
 #[tauri::command]
-pub async fn export_note_pdf(window: tauri::WebviewWindow, path: String) -> Result<()> {
+pub async fn export_note_pdf(
+    window: tauri::WebviewWindow,
+    path: String,
+    headings: Vec<crate::outline::Heading>,
+) -> Result<()> {
     #[cfg(windows)]
     {
+        let target = path.clone();
         // The COM call blocks until WebView2 reports completion; keep it off the
         // async runtime's worker threads.
-        tauri::async_runtime::spawn_blocking(move || crate::print::export(&window, &path))
+        tauri::async_runtime::spawn_blocking(move || crate::print::export(&window, &target))
             .await
-            .map_err(|e| Error::msg(format!("导出任务异常: {e}")))?
+            .map_err(|e| Error::msg(format!("导出任务异常: {e}")))??;
+
+        // Bookmarks are a bonus: a note without headings, or a renderer that
+        // dropped an anchor, must not fail an export that already succeeded.
+        match crate::outline::apply(&path, &headings) {
+            Ok(n) if n > 0 => crate::startup_log(&format!("pdf outline: {n} bookmark(s)")),
+            Ok(_) => {}
+            Err(e) => crate::startup_log(&format!("pdf outline skipped: {e}")),
+        }
+        Ok(())
     }
     #[cfg(not(windows))]
     {
-        let _ = (window, path);
+        let _ = (window, path, headings);
         Err(Error::msg("当前平台暂不支持导出 PDF"))
     }
 }

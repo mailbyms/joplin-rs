@@ -133,3 +133,12 @@ export interface SyncResult {
   finishedAt: number;
   message: string;
 }
+
+/** A heading of the note being exported, in document order. `anchor` is the id
+ *  the print sheet gives it; WebView2 turns the matching in-page link into a
+ *  named destination, which is what the PDF bookmark points at. */
+export interface PdfHeading {
+  level: number;
+  title: string;
+  anchor: string;
+}

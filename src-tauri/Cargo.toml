@@ -27,6 +27,7 @@ uuid = { version = "1", features = ["v4"] }
 regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls-webpki-roots", "charset"] }
 quick-xml = "0.42"
+lopdf = { version = "0.42", default-features = false }
 
 # PDF export talks to WebView2 directly: `window.print()` only opens the
 # interactive print dialog, and Tauri's own `print()` is macOS-only.

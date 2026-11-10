@@ -13,6 +13,7 @@ mod db;
 mod error;
 mod markdown;
 mod model;
+mod outline;
 mod paths;
 #[cfg(windows)]
 mod print;

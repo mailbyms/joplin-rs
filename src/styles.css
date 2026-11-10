@@ -495,6 +495,12 @@ body.printing .print-sheet {
   font-size: 11.5px; color: #8a94a4;
 }
 .print-meta-sep { opacity: .55; }
+/* Headings are wrapped in a self-link so WebView2 records a PDF destination for
+   them (that is what the bookmark tree points at). The link must be invisible:
+   it has to look exactly like plain heading text. */
+.print-paper .print-anchor, .print-paper .print-anchor:hover {
+  color: inherit; text-decoration: none; border-bottom: 0;
+}
 .print-folder { display: inline-flex; align-items: center; gap: 5px; }
 .print-folder svg { color: #9aa4b2; flex: 0 0 auto; }
 .print-body { max-width: none; font-size: 14px; }
