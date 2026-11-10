@@ -378,6 +378,15 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-soft
 :is(.markdown-body, .wysiwyg-host .milkdown .ProseMirror) h5 { font-size: 1em; }
 :is(.markdown-body, .wysiwyg-host .milkdown .ProseMirror) h6 { font-size: 1em; color: #777; }
 
+/* The editor's rich-text surface runs one heading step smaller than the theme:
+   h1 borrows h2's size, h2 borrows h3's, and so on. Body text keeps 16px, and
+   the print sheet / preview stay on the full scale so exported PDFs still read
+   like the reference theme. */
+.wysiwyg-host .milkdown .ProseMirror h1 { font-size: 1.75em; }
+.wysiwyg-host .milkdown .ProseMirror h2 { font-size: 1.5em; }
+.wysiwyg-host .milkdown .ProseMirror h3 { font-size: 1.25em; }
+.wysiwyg-host .milkdown .ProseMirror h4 { font-size: 1em; }
+
 :is(.markdown-body, .wysiwyg-host .milkdown .ProseMirror) :is(blockquote, ul, ol, dl) { margin: .8em 0; }
 /* Crepe gives paragraphs `line-height: 1.5` and 4px of vertical padding of its
    own; the reference theme wants 1.6 and margins only. */
