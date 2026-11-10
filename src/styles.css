@@ -75,7 +75,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-soft
 
 /* There is no top bar any more: the note list header carries the search field
    and the sidebar footer carries sync status. */
-.ghost-btn { padding: 5px 10px; border-radius: 6px; color: var(--text-soft); font-size: 12.5px; }
+.ghost-btn { padding: 5px 10px; border-radius: 6px; color: var(--text-faint); font-size: 12.5px; }
 .ghost-btn:hover { background: var(--bg-hover); color: var(--text); }
 .ghost-btn:disabled { opacity: .55; }
 
@@ -112,7 +112,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-soft
   border-radius: 6px; color: var(--text-soft); font-size: 13px; text-align: left; min-height: 30px;
 }
 .sidebar .nav-item:hover { background: var(--bg-hover); color: var(--text); }
-.sidebar .nav-item.active { background: var(--bg-active); color: #d8e6ff; font-weight: 600; }
+.sidebar .nav-item.active { background: var(--bg-active); color: #ffffff; font-weight: 600; }
 /* A note card is hovering over this notebook. */
 .nav-item.drop-target {
   background: var(--bg-active); color: var(--accent);
@@ -246,7 +246,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-soft
    default), on = 源码. It sits at the end of the title row — a dedicated row
    for one 36px pill wasted too much height. */
 .mode-toggle { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 8px; }
-.mode-toggle-label { font-size: 11.5px; color: var(--text-soft); user-select: none; }
+.mode-toggle-label { font-size: 11.5px; color: var(--text-faint); user-select: none; }
 .switch {
   position: relative; flex: 0 0 auto; width: 36px; height: 21px; padding: 0;
   border-radius: 999px; background: #ccd6e5;
@@ -555,7 +555,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-soft
 .outline-item.level-4, .outline-item.level-5, .outline-item.level-6 { padding-left: 20px; }
 
 /* ---------- status / overlays ---------- */
-.status-bar { flex: 0 0 28px; display: flex; align-items: center; gap: 7px; padding: 0 18px; border-top: 1px solid var(--border-soft); background: var(--bg-list); font-size: 11px; color: var(--text-soft); }
+.status-bar { flex: 0 0 28px; display: flex; align-items: center; gap: 7px; padding: 0 18px; border-top: 1px solid var(--border-soft); background: var(--bg-list); font-size: 11px; color: var(--text-faint); }
 .status-sep { color: var(--text-faint); }
 .save-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
 .save-dot.dirty { background: #d39a3d; }

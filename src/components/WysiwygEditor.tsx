@@ -35,8 +35,15 @@ const codeSurfaceTheme = EditorView.theme(
     ".cm-gutters": { backgroundColor: "transparent", color: "#b3bac5", border: "none" },
     ".cm-activeLine": { backgroundColor: "transparent" },
     ".cm-activeLineGutter": { backgroundColor: "transparent" },
+    // `!important` is load-bearing. CodeMirror's own base theme ships
+    // `&dark.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground
+    // { background: #233 }`, and that four-class selector outranks anything a
+    // normal theme rule can produce — the view reports `dark` because Milkdown
+    // creates it without a light theme, so selecting text in a code block used
+    // to paint near-black behind near-black tokens. The source editor has the
+    // same override for the same reason (see MarkdownEditor.tsx).
     "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection": {
-      backgroundColor: "#cbe3ff",
+      backgroundColor: "#cbe3ff !important",
     },
   },
   { dark: false },

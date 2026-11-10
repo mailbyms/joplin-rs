@@ -194,6 +194,12 @@ token 会落回深色编辑器的浅灰配色（在白纸上几乎看不见）�
 `featureConfigs[Crepe.Feature.CodeMirror].theme` 传入一套 GitHub 配色的
 `EditorView.theme` + `HighlightStyle`（`WysiwygEditor.tsx`）。
 
+这套主题里的选中色必须带 `!important`：CodeMirror 自带 baseTheme 里有一条
+`&dark.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground { #233 }`，
+四个类选择器的优先级压过主题规则，而 Milkdown 创建这个实例时没给浅色主题、会被判成
+`dark`，于是选中代码块文字时背景是近黑色、压在深色 token 上几乎看不见。源码模式的
+`MarkdownEditor.tsx` 早就用 `!important` 挡住了同一个坑。
+
 ## 界面：深蓝科技主题与新图标
 
 - 配色仍是原来的**浅色底**（同样的亮度、留白与文字对比度），只把橙 / 暖棕这一族颜色整体换成
