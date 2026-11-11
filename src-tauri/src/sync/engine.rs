@@ -795,6 +795,26 @@ pub fn run(
         .map_err(|e| err(format!("提交数据库事务失败: {e}")))?;
 
     // --- Upload local changes and deletions. ---
+    // Joplin puts a resource's binary before its `<id>.md` metadata: once
+    // another client sees the metadata it must already be able to fetch the
+    // blob. Upload every blob first, then every metadata file.
+    for (id, item) in &resources_to_put {
+        let Some(path) = find_local_resource(item, resources_dir) else {
+            // A metadata row without a local blob used to be skipped silently,
+            // showing "附件 ↑0" with no hint about what went wrong.
+            result
+                .errors
+                .push(format!("附件 {id} 的本地文件不存在，无法上传"));
+            continue;
+        };
+        match fs::read(&path) {
+            Ok(bytes) => match dav.put(&format!(".resource/{id}"), &bytes) {
+                Ok(()) => result.resources_up += 1,
+                Err(e) => result.errors.push(e.to_string()),
+            },
+            Err(e) => result.errors.push(format!("读取本地资源 {id} 失败: {e}")),
+        }
+    }
     for (i, item) in to_upload.iter().enumerate() {
         let text = serialize_item(item);
         if let Err(e) = dav.put(&format!("{}.md", item.id), text.as_bytes()) {
@@ -808,17 +828,6 @@ pub fn run(
                 to_upload.len(),
                 format!("已上传条目：{}/{}", i + 1, to_upload.len()),
             );
-        }
-    }
-    for (id, item) in &resources_to_put {
-        if let Some(path) = find_local_resource(item, resources_dir) {
-            match fs::read(&path) {
-                Ok(bytes) => match dav.put(&format!(".resource/{id}"), &bytes) {
-                    Ok(()) => result.resources_up += 1,
-                    Err(e) => result.errors.push(e.to_string()),
-                },
-                Err(e) => result.errors.push(format!("读取本地资源 {id} 失败: {e}")),
-            }
         }
     }
     let mut cleared_deletes: Vec<String> = already_gone;

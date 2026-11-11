@@ -62,7 +62,7 @@ Rust 主进程只拉起一个 WebView2 browser 进程，其余 4 个 WebView2 �
 | `%APPDATA%\joplin-rs\profile.json` | 本应用库配置（数据库 / 附件路径） |
 | `%APPDATA%\joplin-rs\sync.json` | WebDAV 同步配置（含明文密码） |
 | `%APPDATA%\joplin-rs\notes.sqlite` | 本地库：首次启动自动创建为**空库**，内容只由 WebDAV 同步写入 |
-| `%APPDATA%\joplin-rs\resources\` | 附件二进制，**只来自 WebDAV 下载** |
+| `%APPDATA%\joplin-rs\resources\` | 附件二进制：WebDAV 下载的，以及本机插入的图片 |
 | `%APPDATA%\joplin-rs\startup.log` | 启动与同步诊断日志 |
 
 - 非 Windows：`$XDG_DATA_HOME/joplin-rs/`（默认 `~/.local/share/joplin-rs/`）或
@@ -83,8 +83,10 @@ Rust 主进程只拉起一个 WebView2 browser 进程，其余 4 个 WebView2 �
 - 首次启动（或数据目录被删除后）：在自有目录里创建一个空的 Joplin 兼容库
   （`notes` / `folders` / `resources` / `tags` / `note_tags` / `deleted_items` + 索引），
   日志会写 `empty library created (nothing imported; WebDAV is the only data source)`。
-- 笔记、笔记本、标签、附件全部由「立即同步」从 WebDAV 下载；附件落在自有 `resources/`，
+- 笔记、笔记本、标签、已有附件全部由「立即同步」从 WebDAV 下载；附件落在自有 `resources/`，
   读取时也只读这个目录（缺附件时提示先同步，不再回头找 Joplin）。
+- 本机粘贴 / 拖入 / 选取的图片同样写入 `resources/` 并登记为 Joplin 资源，
+  正文只存 `![](:/<32位ID>)`；同步时先 PUT `.resource/<id>` 二进制，再 PUT `<id>.md` 元数据。
 - 新建 / 编辑 / 删除只写本地库；删除采用 Joplin 同款软删除（`deleted_time`），
   再由同步传播到 WebDAV。
 - 本机 Joplin 客户端可以同时开着，两者互不干扰、互不读取对方目录。
@@ -98,6 +100,7 @@ Rust 主进程只拉起一个 WebView2 browser 进程，其余 4 个 WebView2 �
 - Markdown 双模式编辑：CodeMirror 6 源码 + Milkdown Crepe 打字机；自动保存（900 ms 防抖）、Ctrl+S
 - Rust 侧渲染：字数 / 字符统计、标题大纲（独立预览面板已移除，仍复用 pulldown-cmark）
 - Joplin `:/<32位ID>` 附件与内部笔记链接解析；附件按需经 IPC 读取并转为 Blob URL
+- 剪贴板粘贴 / 本地文件拖入 / 加号菜单选图，自动创建 Joplin 资源并随 WebDAV 同步上传
 - 源码 / 打字机两种视图（Ctrl+E 切换，「视图」菜单可直达）
 - 新建笔记 / 新建笔记本 / 重命名 / 软删除
 - 关于面板（显示「数据源：WebDAV（唯一来源）」、数据目录与上次同步时间）

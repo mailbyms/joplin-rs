@@ -82,6 +82,13 @@ export interface ResourceData {
   mime: string;
 }
 
+/** A file registered as a Joplin resource; the note body stores `:/<id>`. */
+export interface CreatedResource {
+  id: string;
+  mime: string;
+  size: number;
+}
+
 export type ViewMode = "source" | "wysiwyg";
 export type Selection =
   | { kind: "all" }

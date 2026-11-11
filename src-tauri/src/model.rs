@@ -93,3 +93,14 @@ pub struct ResourceData {
     pub base64: String,
     pub mime: String,
 }
+
+/// Result of registering a pasted / dropped file as a Joplin attachment.
+/// The editor writes `:/<id>` into the note body; the sync engine takes care of
+/// uploading both the metadata row and the blob.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreatedResource {
+    pub id: String,
+    pub mime: String,
+    pub size: i64,
+}

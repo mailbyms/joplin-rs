@@ -194,6 +194,7 @@ pub fn run() {
             commands::list_tags,
             commands::search_notes,
             commands::read_resource,
+            commands::create_resource,
             commands::app_quit,
             commands::app_data_dir,
             commands::open_devtools,

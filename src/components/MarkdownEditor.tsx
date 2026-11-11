@@ -6,10 +6,12 @@ import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
 import { tags as t } from "@lezer/highlight";
 import { basicSetup } from "codemirror";
+import { createResourceFromFile, imageFilesFrom } from "../attachments";
 
 interface Props {
   value: string;
   onChange: (next: string) => void;
+  onError?: (message: string) => void;
 }
 
 /**
@@ -151,10 +153,36 @@ const editorTheme = EditorView.theme(
  * The parent gives this component a `key={note.id}` so a note switch simply
  * remounts the editor. No fragile bidirectional document synchronization.
  */
-export default function MarkdownEditor({ value, onChange }: Props) {
+export default function MarkdownEditor({ value, onChange, onError }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const onErrorRef = useRef(onError);
+  onErrorRef.current = onError;
+
+  /** Register each dropped/pasted image as a Joplin resource and insert
+   *  `![](:/<id>)` at the caret. CodeMirror's basicSetup has no image handler
+   *  of its own, so without this the paste is silently ignored. */
+  const insertFiles = (view: EditorView, files: File[], extraText: string) => {
+    void (async () => {
+      const tags: string[] = [];
+      for (const file of files) {
+        try {
+          tags.push(`![](${await createResourceFromFile(file)})`);
+        } catch (e) {
+          onErrorRef.current?.(`插入图片失败：${String(e)}`);
+        }
+      }
+      if (tags.length === 0) return;
+      const text = `${extraText ? `${extraText}\n` : ""}${tags.join("\n")}\n`;
+      const at = view.state.selection.main.from;
+      view.dispatch({
+        changes: { from: at, insert: text },
+        selection: { anchor: at + text.length },
+      });
+      view.focus();
+    })();
+  };
 
   useEffect(() => {
     if (!host.current) return;
@@ -170,6 +198,24 @@ export default function MarkdownEditor({ value, onChange }: Props) {
             if (update.docChanged) {
               onChangeRef.current(update.state.doc.toString());
             }
+          }),
+          EditorView.domEventHandlers({
+            paste(event, editor) {
+              const data = (event as ClipboardEvent).clipboardData;
+              const files = imageFilesFrom(data);
+              if (files.length === 0) return false;
+              event.preventDefault();
+              insertFiles(editor, files, data?.getData("text/plain") ?? "");
+              return true;
+            },
+            drop(event, editor) {
+              const data = (event as DragEvent).dataTransfer;
+              const files = imageFilesFrom(data);
+              if (files.length === 0) return false;
+              event.preventDefault();
+              insertFiles(editor, files, "");
+              return true;
+            },
           }),
         ],
       }),

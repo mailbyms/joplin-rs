@@ -1,5 +1,5 @@
 use crate::{
-    db::{base64_encode, make_excerpt, now_ms, ProfileConfig},
+    db::{base64_decode, base64_encode, make_excerpt, now_ms, ProfileConfig},
     error::{Error, Result},
     markdown,
     model::*,
@@ -369,8 +369,9 @@ pub fn app_quit(app: tauri::AppHandle) {
 }
 
 /// Attachments are read **only** from our own data directory, where the sync
-/// engine writes the blobs it downloads from WebDAV. Returns base64 so a single
-/// IPC round-trip delivers the bytes to the WebView.
+/// engine writes downloaded blobs and `create_resource` writes locally
+/// inserted images. Returns base64 so a single IPC round-trip delivers the
+/// bytes to the WebView.
 #[tauri::command]
 pub fn read_resource(state: State<'_, AppState>, id: String) -> Result<ResourceData> {
     if id.len() != 32 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -413,6 +414,111 @@ pub fn read_resource(state: State<'_, AppState>, id: String) -> Result<ResourceD
         base64: base64_encode(&bytes),
         mime,
     })
+}
+
+/// Joplin's `file_extension` is derived from the MIME type; a well-formed
+/// filename extension wins when a real file was picked from disk.
+fn resource_extension(mime: &str, filename: &str) -> String {
+    let from_name = PathBuf::from(filename)
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    if !from_name.is_empty()
+        && from_name.len() <= 8
+        && from_name.bytes().all(|b| b.is_ascii_alphanumeric())
+    {
+        return from_name;
+    }
+    let from_mime = match mime {
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/png" => "png",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "image/svg+xml" => "svg",
+        "image/bmp" | "image/x-ms-bmp" => "bmp",
+        "image/avif" => "avif",
+        "image/heic" => "heic",
+        "image/tiff" => "tiff",
+        "application/pdf" => "pdf",
+        _ => "bin",
+    };
+    from_mime.to_string()
+}
+
+/// Clipboard images sometimes arrive with an empty MIME type. Recognise the
+/// four common magic headers so Joplin still treats the resource as an image.
+fn sniff_mime(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        Some("image/jpeg")
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        Some("image/gif")
+    } else if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else {
+        None
+    }
+}
+
+/// Register a pasted / dropped / picked file as a Joplin resource.
+///
+/// This is the missing write side of the attachment pipeline: Milkdown's
+/// default uploader inlines a `data:` URL into the note body, which is never a
+/// resource and therefore never reaches WebDAV. Here we generate a 32-hex id,
+/// write the blob to our own `resources/` directory and insert the metadata row,
+/// exactly like Joplin's `shim.createResourceFromPath()`. The editor then
+/// stores `:/<id>` in the body and the existing sync engine does the rest.
+#[tauri::command]
+pub fn create_resource(
+    state: State<'_, AppState>,
+    base64: String,
+    mime: String,
+    filename: String,
+) -> Result<CreatedResource> {
+    let bytes = base64_decode(&base64)?;
+    if bytes.is_empty() {
+        return Err(Error::msg("附件内容为空"));
+    }
+    let mut mime = mime.trim().to_ascii_lowercase();
+    if mime.is_empty() || mime == "application/octet-stream" {
+        mime = sniff_mime(&bytes)
+            .unwrap_or("application/octet-stream")
+            .to_string();
+    } else if mime == "image/jpg" {
+        mime = "image/jpeg".to_string();
+    }
+    let ext = resource_extension(&mime, &filename);
+    let id = uuid::Uuid::new_v4().simple().to_string();
+
+    let dir = crate::paths::resources_dir();
+    fs::create_dir_all(&dir)?;
+    let path = if ext.is_empty() {
+        dir.join(&id)
+    } else {
+        dir.join(format!("{id}.{ext}"))
+    };
+    fs::write(&path, &bytes)?;
+
+    let title = if filename.trim().is_empty() {
+        format!("image.{ext}")
+    } else {
+        filename.clone()
+    };
+    let size = bytes.len() as i64;
+    let inserted = state.with_db(|db| {
+        db.create_resource(&id, &title, &mime, &filename, &ext, size, now_ms())
+    });
+    if let Err(e) = inserted {
+        // A half-created attachment would be silently skipped by the sync
+        // engine (metadata without a blob), so roll the file back as well.
+        let _ = fs::remove_file(&path);
+        return Err(e);
+    }
+    // Keep the in-memory extension map in sync so `render_with` resolves the
+    // new `:/id` immediately, without waiting for a full state reload.
+    state.resource_ext.write().insert(id.clone(), ext);
+    Ok(CreatedResource { id, mime, size })
 }
 
 /// Absolute path of the application's own data directory, shown in the UI.

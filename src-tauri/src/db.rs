@@ -123,8 +123,9 @@ fn normalise_paths(cfg: &mut ProfileConfig, layout: &paths::DataLayout) -> Resul
 /// Joplin-compatible schema, reduced to what this client reads and writes.
 ///
 /// The columns mirror Joplin's own tables so a synced item keeps every field an
-/// official client sends (latitude, todo_due, share ids, ...). Attachments and
-/// notes are only ever populated by `sync::engine` from WebDAV.
+/// official client sends (latitude, todo_due, share ids, ...). Notes and
+/// attachments arrive from WebDAV via `sync::engine`, or are created locally
+/// when a note is edited / an image is inserted.
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS notes (
   id TEXT PRIMARY KEY,
@@ -410,6 +411,30 @@ impl Db {
         Ok(())
     }
 
+    /// Register a locally attached file as a Joplin resource. The blob itself is
+    /// written by `commands::create_resource`; this row is what makes the sync
+    /// engine push both `<id>.md` and `.resource/<id>` on the next run.
+    pub fn create_resource(
+        &self,
+        id: &str,
+        title: &str,
+        mime: &str,
+        filename: &str,
+        ext: &str,
+        size: i64,
+        now: i64,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO resources
+               (id, title, mime, filename, created_time, updated_time,
+                user_created_time, user_updated_time, file_extension, size,
+                blob_updated_time)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?5, ?5, ?6, ?7, ?5)",
+            params![id, title, mime, filename, now, ext, size],
+        )?;
+        Ok(())
+    }
+
     /// Move a note into another notebook. The update stamp is bumped so the
     /// WebDAV synchroniser pushes the new `parent_id` on the next run.
     pub fn move_note(&self, id: &str, folder_id: &str) -> Result<()> {
@@ -641,6 +666,38 @@ pub fn base64_encode(data: &[u8]) -> String {
         });
     }
     s
+}
+
+/// Inverse of `base64_encode`, used when the WebView hands us an attached file.
+/// Whitespace is ignored so a data URL body with line breaks still decodes.
+pub fn base64_decode(text: &str) -> Result<Vec<u8>> {
+    fn digit(c: u8) -> Option<u32> {
+        match c {
+            b'A'..=b'Z' => Some((c - b'A') as u32),
+            b'a'..=b'z' => Some((c - b'a' + 26) as u32),
+            b'0'..=b'9' => Some((c - b'0' + 52) as u32),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+    let mut out = Vec::with_capacity(text.len() / 4 * 3);
+    let mut acc = 0u32;
+    let mut bits = 0u32;
+    for c in text.bytes().filter(|b| !b.is_ascii_whitespace()) {
+        if c == b'=' {
+            break;
+        }
+        let d = digit(c).ok_or_else(|| Error::msg("附件数据不是合法的 base64"))?;
+        acc = (acc << 6) | d;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+            acc &= (1u32 << bits) - 1;
+        }
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api } from "./api";
+import { normalizeInlineImages } from "./attachments";
 import Sidebar from "./components/Sidebar";
 import NoteList from "./components/NoteList";
 import ContextMenu from "./components/ContextMenu";
@@ -233,11 +234,22 @@ export default function App() {
       setStatus("saving");
       const write = saveChain.current.then(async () => {
         try {
-          await api.saveNote(snapshot.id, snapshot.title, snapshot.body);
-          // The backend bumped updated_time; mirror it so the header stamp
-          // reflects the save without waiting for a re-open.
+          // Last line of defence: notes written before the resource pipeline
+          // existed may still carry an inline `data:image/...;base64` image.
+          // Convert it to a real resource so the sync engine has a blob to
+          // upload. Normal inserts never hit this path (no `data:image` text).
+          const body = await normalizeInlineImages(snapshot.body);
+          await api.saveNote(snapshot.id, snapshot.title, body);
+          // Only mirror the rewritten body back into the draft when no newer
+          // edit arrived while the conversion was in flight.
           if (activeRef.current?.id === snapshot.id) {
-            activeRef.current = { ...activeRef.current, updatedTime: Date.now() };
+            activeRef.current = {
+              ...activeRef.current,
+              ...(body !== snapshot.body && activeRef.current.body === snapshot.body
+                ? { body }
+                : {}),
+              updatedTime: Date.now(),
+            };
             setActiveNote(activeRef.current);
           }
           setStatus("saved");
@@ -852,6 +864,7 @@ export default function App() {
                     key={activeNote.id}
                     value={activeNote.body}
                     onChange={(body) => onDraftChange({ body })}
+                    onError={setError}
                   />
                 </Suspense>
               </div>
@@ -867,6 +880,7 @@ export default function App() {
                     onChange={(body) => onDraftChange({ body })}
                     onOpenNote={(id) => void openNote(id)}
                     onFallback={() => setViewMode("source")}
+                    onError={setError}
                   />
                 </Suspense>
               </div>

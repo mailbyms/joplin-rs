@@ -6,6 +6,7 @@ import type {
   NoteSummary,
   PdfHeading,
   RenderedNote,
+  CreatedResource,
   ResourceData,
   SearchHit,
   Stats,
@@ -67,6 +68,10 @@ export const api = {
     invoke<SearchHit[]>("search_notes", { query, limit }),
   readResource: (id: string) =>
     invoke<ResourceData>("read_resource", { id }),
+  /** Registers a pasted / dropped / picked file as a Joplin resource. Returns
+   *  the 32-hex id the editor must write into the body as `:/<id>`. */
+  createResource: (args: { base64: string; mime: string; filename: string }) =>
+    invoke<CreatedResource>("create_resource", args),
 
   syncGetConfig: () => invoke<SyncConfig>("sync_get_config"),
   syncStatus: () => invoke<SyncStatus>("sync_status"),

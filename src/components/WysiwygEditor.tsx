@@ -23,6 +23,7 @@ import { EditorView } from "@codemirror/view";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import { api } from "../api";
+import { createResourceFromFile, resourceDataUrl } from "../attachments";
 
 /** Fenced code blocks are CodeMirror instances, and Crepe ships them unthemed:
  *  the tokens fall back to a dark-editor palette that is unreadable on the
@@ -70,9 +71,19 @@ interface Props {
   onChange: (next: string) => void;
   onOpenNote: (id: string) => void;
   onFallback: () => void;
+  onError: (message: string) => void;
 }
 
 const JOPLIN_LINK = /^:\/([0-9a-fA-F]{32})$/;
+
+/** Crepe serialises an image-block with the node's `ratio` (e.g. `![1.00]`)
+ *  as the alt text. That is an editor implementation detail, not note content:
+ *  stripping it keeps the Joplin body `![](:/id)` and stops the round-trip
+ *  check from reporting a spurious "will normalise Markdown" notice. */
+const IMAGE_RATIO_ALT = /!\[\d+(?:\.\d+)?\]\(:\/([0-9a-fA-F]{32})\)/g;
+function canonicalImageAlt(markdown: string): string {
+  return markdown.replace(IMAGE_RATIO_ALT, (_match, id: string) => `![](:/${id})`);
+}
 
 /**
  * Blanks fenced blocks and inline code **in place** — every character becomes a
@@ -168,12 +179,15 @@ export default function WysiwygEditor({
   onChange,
   onOpenNote,
   onFallback,
+  onError,
 }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const onChangeRef = useRef(onChange);
   const onOpenNoteRef = useRef(onOpenNote);
+  const onErrorRef = useRef(onError);
   onChangeRef.current = onChange;
   onOpenNoteRef.current = onOpenNote;
+  onErrorRef.current = onError;
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
@@ -196,6 +210,30 @@ export default function WysiwygEditor({
       featureConfigs: {
         [Crepe.Feature.CodeMirror]: {
           theme: [codeSurfaceTheme, syntaxHighlighting(codeSyntax)],
+        },
+        // Crepe's built-in uploader would inline a `data:` URL that never
+        // becomes a Joplin resource. Route every entry point (block menu's
+        // "图片", inline upload button, paste and file drop — they all end up in
+        // this uploader) through our own resource creator instead.
+        [Crepe.Feature.ImageBlock]: {
+          onUpload: async (file: File) => {
+            try {
+              return await createResourceFromFile(file);
+            } catch (e) {
+              onErrorRef.current(`插入图片失败：${String(e)}`);
+              throw e;
+            }
+          },
+          // Keep `:/id` as the serialised src while showing real bytes in the
+          // DOM. Without this the image loads as a broken relative URL.
+          proxyDomURL: (url: string) => resourceDataUrl(url),
+          blockUploadButton: "选择文件",
+          blockConfirmButton: "确定",
+          blockCaptionPlaceholderText: "图片说明",
+          blockUploadPlaceholderText: "或粘贴图片链接",
+          inlineUploadButton: "选择文件",
+          inlineConfirmButton: "确定",
+          inlineUploadPlaceholderText: "或粘贴图片链接",
         },
         // The block menu is what the "+" handle and a leading "/" open. Crepe
         // hard-codes its labels in English; only the label changes here — the
@@ -235,9 +273,11 @@ export default function WysiwygEditor({
     // round-trip check has passed, so switching modes never rewrites a note.
     crepe.on((listener) => {
       listener.markdownUpdated((_ctx, markdown) => {
-        if (!ready || cancelled || markdown === lastMarkdown) return;
-        lastMarkdown = markdown;
-        onChangeRef.current(markdown);
+        if (!ready || cancelled) return;
+        const next = canonicalImageAlt(markdown);
+        if (next === lastMarkdown) return;
+        lastMarkdown = next;
+        onChangeRef.current(next);
       });
     });
 
@@ -287,7 +327,10 @@ export default function WysiwygEditor({
         setNotice(readonlyNotice(issue));
         crepe.setReadonly(true);
       } else {
-        if (round.replace(/\r\n/g, "\n").trim() !== value.replace(/\r\n/g, "\n").trim()) {
+        if (
+          canonicalImageAlt(round).replace(/\r\n/g, "\n").trim() !==
+          value.replace(/\r\n/g, "\n").trim()
+        ) {
           setNotice(
             "该视图会规范化 Markdown 排版（列表符号、空行等），内容不会丢失。",
           );
