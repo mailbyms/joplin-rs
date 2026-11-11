@@ -237,11 +237,23 @@ pub fn delete_note(state: State<'_, AppState>, id: String) -> Result<()> {
     Ok(())
 }
 
+/// Full scrollable size of the print sheet, measured by the frontend once the
+/// note is laid out. WKWebView's PDF capture defaults to the *visible viewport*
+/// (WKPDFConfiguration's null rect), which silently truncates a long note to
+/// one screen; `print_macos.rs` turns this into an explicit capture rect.
+/// WebView2 paginates the print media itself and ignores it.
+#[derive(serde::Deserialize)]
+pub struct PdfBounds {
+    pub width: f64,
+    pub height: f64,
+}
+
 /// Write whatever the window currently shows to a PDF file.
 ///
 /// The frontend first swaps the whole UI for a print-only sheet holding the
 /// note, so no note id is needed here: the DOM *is* the document. Rendering and
-/// file output both happen inside WebView2 (see `print.rs`), which keeps the
+/// file output both happen inside the platform webview (WebView2 on Windows,
+/// WKWebView on macOS — see `print.rs` / `print_macos.rs`), which keeps the
 /// text selectable instead of rasterising a screenshot.
 ///
 /// `headings` carries the note's headings in document order; once the file
@@ -251,30 +263,64 @@ pub async fn export_note_pdf(
     window: tauri::WebviewWindow,
     path: String,
     headings: Vec<crate::outline::Heading>,
+    bounds: Option<PdfBounds>,
 ) -> Result<()> {
-    #[cfg(windows)]
-    {
-        let target = path.clone();
-        // The COM call blocks until WebView2 reports completion; keep it off the
-        // async runtime's worker threads.
-        tauri::async_runtime::spawn_blocking(move || crate::print::export(&window, &target))
-            .await
-            .map_err(|e| Error::msg(format!("导出任务异常: {e}")))??;
+    let size = bounds
+        .filter(|b| {
+            b.width.is_finite()
+                && b.height.is_finite()
+                && b.width > 0.0
+                && b.height > 0.0
+        })
+        .map(|b| (b.width, b.height));
+    render_pdf(window, path.clone(), size).await?;
 
-        // Bookmarks are a bonus: a note without headings, or a renderer that
-        // dropped an anchor, must not fail an export that already succeeded.
-        match crate::outline::apply(&path, &headings) {
-            Ok(n) if n > 0 => crate::startup_log(&format!("pdf outline: {n} bookmark(s)")),
-            Ok(_) => {}
-            Err(e) => crate::startup_log(&format!("pdf outline skipped: {e}")),
-        }
-        Ok(())
+    // Bookmarks are a bonus: a note without headings, or a renderer that
+    // dropped an anchor, must not fail an export that already succeeded.
+    match crate::outline::apply(&path, &headings) {
+        Ok(n) if n > 0 => crate::startup_log(&format!("pdf outline: {n} bookmark(s)")),
+        Ok(_) => {}
+        Err(e) => crate::startup_log(&format!("pdf outline skipped: {e}")),
     }
-    #[cfg(not(windows))]
-    {
-        let _ = (window, path, headings);
-        Err(Error::msg("当前平台暂不支持导出 PDF"))
-    }
+    Ok(())
+}
+
+/// Platform-specific render + file write, kept separate so the bookmark
+/// post-processing above stays shared between Windows and macOS.
+///
+/// Both platform exporters block until the webview reports completion, so the
+/// work goes to a blocking thread rather than the async runtime's workers.
+#[cfg(windows)]
+async fn render_pdf(
+    window: tauri::WebviewWindow,
+    target: String,
+    _size: Option<(f64, f64)>,
+) -> Result<()> {
+    tauri::async_runtime::spawn_blocking(move || crate::print::export(&window, &target))
+        .await
+        .map_err(|e| Error::msg(format!("导出任务异常: {e}")))?
+}
+
+#[cfg(target_os = "macos")]
+async fn render_pdf(
+    window: tauri::WebviewWindow,
+    target: String,
+    size: Option<(f64, f64)>,
+) -> Result<()> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::print_macos::export(&window, &target, size)
+    })
+    .await
+    .map_err(|e| Error::msg(format!("导出任务异常: {e}")))?
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+async fn render_pdf(
+    _window: tauri::WebviewWindow,
+    _target: String,
+    _size: Option<(f64, f64)>,
+) -> Result<()> {
+    Err(Error::msg("当前平台暂不支持导出 PDF"))
 }
 
 #[tauri::command]

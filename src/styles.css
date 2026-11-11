@@ -712,6 +712,31 @@ body.printing .print-sheet {
   background: rgba(20, 33, 58, .92); color: #fff; font-size: 12.5px;
   box-shadow: 0 6px 20px rgba(15, 25, 45, .28);
 }
+/* WKWebView's createPDF captures exactly the rect handed to
+   WKPDFConfiguration. Its default (null rect) is the visible viewport, which
+   silently truncates a long note, so the frontend measures the sheet while
+   this class is on: pin it to the paper width, drop the grey canvas and the
+   on-screen progress pill. Screen-only — WebView2 prints in @media print,
+   where the paged rules below take over untouched. */
+@media screen {
+  body.pdf-capture .print-sheet {
+    width: 210mm; right: auto; background: #fff;
+  }
+  body.pdf-capture .print-paper { margin: 0; }
+  /* WKWebView's createPDF captures SCREEN media, so the `@media print` rules
+     below never run on macOS. Body-level portals (the note context menu) would
+     otherwise be drawn into the PDF; `body.printing #root` only hides overlays
+     rendered inline. Keep this list in sync with the print rules below. */
+  body.pdf-capture .pdf-busy,
+  body.pdf-capture .toast,
+  body.pdf-capture .context-menu,
+  body.pdf-capture .modal-backdrop { display: none !important; }
+  /* The 9px scrollbar would shrink the sheet's client width below the paper's
+     210mm and add a horizontal overflow. With the scrollbar gone the measured
+     scrollWidth is exactly the paper width, so the capture rect cannot clip
+     the right edge. WebKit never draws scrollbars into a PDF anyway. */
+  body.pdf-capture .print-sheet::-webkit-scrollbar { width: 0; height: 0; }
+}
 /* Paged media: the paper fills the page, decorations disappear. The page
    margins come from WebView2's print settings (see `print.rs`) rather than
    `@page`, because an element's padding is only applied once — pages after the

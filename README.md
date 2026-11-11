@@ -105,9 +105,51 @@ Rust 主进程只拉起一个 WebView2 browser 进程，其余 4 个 WebView2 �
 - 原生菜单栏：文件 / 视图 / 工具 / 帮助；菜单事件经 `menu://action` 转发到前端
 - **WebDAV 同步**：同步设置、连接测试、预演（dry-run）、立即同步、自动同步、进度与结果
 - 应用自包含数据目录（`paths.rs` 统一路径，附件只来自 WebDAV，支持 `JOPLIN_RS_DATA_DIR` 覆盖）
-- 两个编辑器均按视图懒加载（Textus 式启动预算）；22 个 Rust 单元测试覆盖渲染、链接改写、
+- **PDF 导出**（右键笔记卡片）：Windows 走 WebView2，macOS 走 WKWebView；见下节
+- 两个编辑器均按视图懒加载（Textus 式启动预算）；32 个 Rust 单元测试覆盖渲染、链接改写、
   HTML 消毒、中文搜索、摘要清洗、base64、WebDAV XML、Joplin 同步文件协议、条目类型识别、
-  同步引擎与数据目录布局
+  同步引擎、数据目录布局与 PDF 数据/捕获尺寸校验
+
+## PDF 导出
+
+右键笔记卡片 →「导出为 PDF」。前端先把整个窗口换成只含笔记内容的打印页（`PrintSheet` + `@media print`），
+再让平台 WebView 渲染当前 DOM，所以文字是矢量、可选中、可搜索，不是截图。
+
+| 平台 | 实现 | 输出 |
+|---|---|---|
+| Windows | `print.rs` → WebView2 `ICoreWebView2_7::PrintToPdf` | A4 分页、20/18 mm 页边距、背景图形、标题书签 |
+| macOS | `print_macos.rs` → WKWebView `createPDFWithConfiguration:completionHandler:` | A4 宽、内容完整的长页矢量 PDF，不按 A4 高度分页 |
+| Linux | 暂无实现 | 返回「当前平台暂不支持导出 PDF」 |
+
+**macOS 的完整内容捕获**：`WKPDFConfiguration` 默认用 null rect，含义是「当前可见视口」，
+而打印页是 `position: fixed` + 内部滚动，所以早期版本只导出一屏、长笔记被从页底截断。
+现在前端在导出前给 `body` 加 `pdf-capture`（仅 `@media screen` 生效，不影响 Windows 的打印
+媒体），把打印页收窄到 210mm、量出 `.print-sheet` 的完整 `scrollWidth/scrollHeight`，经 IPC
+传给 Rust；`print_macos.rs` 用它设置从 `(0, 0)` 起的显式 `rect`。这与 Textus 的离屏
+WKWebView 用的是同一个关键点，但省掉了它的分页/切页逻辑。
+
+**`createPDF` 用的是屏幕媒体**：本机实测 PDF 里保留 `@media screen` 内容、不含 `@media print`
+内容，也就是说下面那组打印规则在 macOS 上完全不生效，真正决定导出样式的是 `pdf-capture` 这组
+屏幕规则。因此它们额外做了两件事：隐藏 portal 到 `<body>` 的 `.context-menu` / `.toast` /
+`.modal-backdrop`（`body.printing #root` 只能藏住渲染在 `#root` 里的浮层），以及把打印页的
+滚动条宽度清零，让 `clientWidth === scrollWidth === 794`，避免 9px 滚动条造成横向裁切。
+Windows 走打印媒体，看不到这组规则，不受影响。
+
+本机 macOS 14.7.1 的 WKWebView 实测：120 段测试页默认只有 1652 字符且缺尾段，显式 rect 后
+得到 **794 × 4888 pt、7943 字符、首段到末段齐全**；1320 pt 宽窗口下收窄纸张同样完整，进度气泡
+不进 PDF。用**项目真实编译出的 CSS** 加真实 `PrintSheet` 结构复验 150 段（含表格、代码块、
+首尾标题）：794 × 5506 pt 单页，第 1/75/150 段与尾部标记全部保留，应用浮层全部不进 PDF。
+超长笔记（600 段 / 23608 pt）WebKit 会在 14400 pt 处自行拆成两页，但内容不丢。
+
+剩下的平台差异：`createPDF` 忽略 `@page { size, margin }`，长页不按 A4 高度分页；要纸张尺寸的
+分页结果需改用 `printOperationWithPrintInfo:` + `NSPrintSaveJob`。另外 WebKit 不会像 Chromium
+那样把 `<a href="#id">` 写成 PDF 的 `/Dests`，所以 `outline::apply` 在 macOS 上是 best-effort：
+找不到命名目标就跳过书签，不会让导出失败。
+
+实现位于 `src-tauri/src/commands.rs`（`render_pdf` 的平台分叉 + 共用的书签后处理）与
+`print.rs` / `print_macos.rs`。macOS 专属依赖固定在 `Cargo.toml` 的
+`[target.'cfg(target_os = "macos")'.dependencies]`，版本与 Tauri/wry 使用的 objc2 保持一致，
+否则 `NSData` / `NSError` 等 extern 类型对不上，回调签名无法编译。
 
 ## 构建与运行
 

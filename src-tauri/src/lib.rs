@@ -17,6 +17,8 @@ mod outline;
 mod paths;
 #[cfg(windows)]
 mod print;
+#[cfg(target_os = "macos")]
+mod print_macos;
 mod search;
 mod state;
 mod sync;

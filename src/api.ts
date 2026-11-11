@@ -50,9 +50,14 @@ export const api = {
   deleteNote: (id: string) => invoke<void>("delete_note", { id }),
   /** Writes whatever the window is showing to `path` — the caller puts the note
    *  on screen first (see `PrintSheet`), so no note id is involved. `headings`
-   *  turn into the PDF's bookmark tree. */
-  exportNotePdf: (path: string, headings: PdfHeading[]) =>
-    invoke<void>("export_note_pdf", { path, headings }),
+   *  turn into the PDF's bookmark tree. `bounds` is the print sheet's full
+   *  scroll size: WKWebView only captures the rect it is given, and its default
+   *  is the visible viewport, which would truncate a long note. */
+  exportNotePdf: (
+    path: string,
+    headings: PdfHeading[],
+    bounds?: { width: number; height: number },
+  ) => invoke<void>("export_note_pdf", { path, headings, bounds }),
   createFolder: (title: string, parentId: string) =>
     invoke<Folder>("create_folder", { title, parentId }),
   renameFolder: (id: string, title: string) =>

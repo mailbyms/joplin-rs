@@ -404,13 +404,30 @@ export default function App() {
           ready,
           new Promise((resolve) => window.setTimeout(resolve, 4000)),
         ]);
-        await api.exportNotePdf(path, printHeadings.current);
+        // WKWebView's createPDF only captures the rect it is given; the default
+        // is the visible viewport and would cut a long note off at one screen.
+        // `pdf-capture` pins the sheet to the paper width (styles.css), so the
+        // measured scroll size is the whole document. WebView2 prints in
+        // @media print and ignores these screen-only rules.
+        document.body.classList.add("pdf-capture");
+        // Narrowing the sheet reflows the note (images, tables, line wrapping).
+        // Let WebKit paint that layout before measuring, otherwise the capture
+        // rect can be a few lines short of the real content.
+        await new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        );
+        const sheet = document.querySelector<HTMLElement>(".print-sheet");
+        const width = sheet?.scrollWidth ?? 0;
+        const height = sheet?.scrollHeight ?? 0;
+        if (!width || !height) throw new Error("无法确定 PDF 导出区域尺寸");
+        await api.exportNotePdf(path, printHeadings.current, { width, height });
         if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
         setNotice(`已导出 PDF：${path}`);
         noticeTimer.current = window.setTimeout(() => setNotice(null), 6000);
       } catch (e) {
         setError(String(e));
       } finally {
+        document.body.classList.remove("pdf-capture");
         printReady.current = null;
         setPrintJob(null);
         setPdfBusy(false);

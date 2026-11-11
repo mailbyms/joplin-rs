@@ -1,6 +1,6 @@
 [package]
 name = "joplin-rs"
-version = "0.2.0"
+version = "0.2.1"
 description = "A memory-light, Joplin-compatible note app built with Rust and Tauri 2"
 edition = "2021"
 rust-version = "1.85"
@@ -29,11 +29,25 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 quick-xml = "0.42"
 lopdf = { version = "0.42", default-features = false }
 
-# PDF export talks to WebView2 directly: `window.print()` only opens the
-# interactive print dialog, and Tauri's own `print()` is macOS-only.
+# PDF export talks to the platform webview directly: `window.print()` only
+# opens the interactive print dialog, and Tauri's own `print()` is macOS-only
+# (and dialog-driven), so neither can write a file silently.
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.39"
 windows = { version = "0.62", features = ["Win32_Foundation"] }
+
+# macOS uses WKWebView.createPDFWithConfiguration:completionHandler:. Pin these
+# to the versions Tauri/wry already use: Tauri hands us a raw WKWebView pointer
+# and the generated bindings must agree on the objc2 extern types (NSData,
+# NSError, ...) or the callback signature will not line up.
+[target.'cfg(target_os = "macos")'.dependencies]
+# `objc2-core-foundation` gates WKPDFConfiguration.rect in the generated
+# bindings; without it the default capture rect is the visible viewport only.
+objc2-web-kit = { version = "0.3.2", features = ["WKWebView", "WKPDFConfiguration", "block2", "objc2-core-foundation"] }
+objc2-foundation = { version = "0.3.2", features = ["NSData", "NSError", "NSString"] }
+objc2-core-foundation = "0.3.2"
+objc2 = "0.6.5"
+block2 = "0.6.2"
 
 [features]
 default = []
