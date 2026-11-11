@@ -79,6 +79,20 @@ function tickerLine(progress: SyncProgress): string | null {
   }
 }
 
+/** Closing line for the ticker. The dialog is usually closed during a
+    background sync, so the ticker has to carry the counts — above all how many
+    notes this run removed, which otherwise had no visible trace at all. */
+function tickerSummary(result: SyncResult): string {
+  const parts = [`下载 ${result.downloaded}`, `上传 ${result.uploaded}`];
+  const deleted = result.deletedLocal + result.deletedRemote;
+  if (deleted > 0) parts.push(`删除 ${deleted}`);
+  if (result.resourcesDown + result.resourcesUp > 0) {
+    parts.push(`附件 ↓${result.resourcesDown} ↑${result.resourcesUp}`);
+  }
+  if (result.conflicts > 0) parts.push(`冲突 ${result.conflicts}`);
+  return `同步完成：${parts.join(" · ")}`;
+}
+
 export default function App() {
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
   const [folders, setFolders] = useState<Folder[]>([]);
@@ -601,9 +615,10 @@ export default function App() {
     }).then((fn) => {
       progress = fn;
     });
-    void listen<SyncResult>("sync://done", (event) =>
-      setSyncResult(event.payload),
-    ).then((fn) => {
+    void listen<SyncResult>("sync://done", (event) => {
+      setSyncResult(event.payload);
+      setSyncFeed((prev) => [...prev, tickerSummary(event.payload)].slice(-3));
+    }).then((fn) => {
       done = fn;
     });
     return () => {

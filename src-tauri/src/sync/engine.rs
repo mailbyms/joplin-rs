@@ -949,6 +949,19 @@ pub fn run(
     tx.commit()
         .map_err(|e| err(format!("提交数据库事务失败: {e}")))?;
 
+    // A sync that only removes notes used to leave the sidebar ticker with
+    // nothing but "已完成": the counts live in the result panel, which is
+    // closed during a background sync. Announce local removals explicitly.
+    if result.deleted_local > 0 {
+        emit(
+            app,
+            "delete",
+            0,
+            0,
+            format!("已同步删除：本地移除 {} 项", result.deleted_local),
+        );
+    }
+
     // --- Upload local changes and deletions. ---
     // Joplin puts a resource's binary before its `<id>.md` metadata: once
     // another client sees the metadata it must already be able to fetch the
@@ -986,7 +999,8 @@ pub fn run(
         }
     }
     let mut cleared_deletes: Vec<String> = already_gone;
-    for id in &to_delete_remote {
+    let total_del = to_delete_remote.len();
+    for (i, id) in to_delete_remote.iter().enumerate() {
         match dav.delete(&format!("{id}.md")) {
             Ok(()) => {
                 let _ = dav.delete(&format!(".resource/{id}"));
@@ -994,6 +1008,15 @@ pub fn run(
                 cleared_deletes.push(id.clone());
             }
             Err(e) => result.errors.push(e.to_string()),
+        }
+        if i % 20 == 0 || i + 1 == total_del {
+            emit(
+                app,
+                "delete",
+                i + 1,
+                total_del,
+                format!("已同步删除：远端 {}/{}", i + 1, total_del),
+            );
         }
     }
     // Only dequeue deletions that were actually applied, so a transient

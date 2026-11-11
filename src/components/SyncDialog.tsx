@@ -17,6 +17,18 @@ function formatTime(ts: number): string {
   return new Date(ts).toLocaleString("zh-CN");
 }
 
+/** Detail behind the deletion count: which side actually dropped the items. */
+function deleteDetail(result: SyncResult): string {
+  const parts: string[] = [];
+  if (result.deletedRemote > 0) {
+    parts.push(`本机删除、已同步到服务器 ${result.deletedRemote} 项`);
+  }
+  if (result.deletedLocal > 0) {
+    parts.push(`服务器端已删除、本地同步移除 ${result.deletedLocal} 项`);
+  }
+  return parts.join("；");
+}
+
 export default function SyncDialog({
   onClose,
   onSaved,
@@ -210,6 +222,11 @@ export default function SyncDialog({
               远端条目 {result.remoteItems} · 本地条目 {result.localItems} ·
               附件 ↓{result.resourcesDown} ↑{result.resourcesUp}
             </div>
+            {(result.deletedLocal > 0 || result.deletedRemote > 0) && (
+              <div className="sync-deleted">
+                {`本次删除 ${result.deletedLocal + result.deletedRemote} 项：${deleteDetail(result)}`}
+              </div>
+            )}
             {result.unsupported > 0 && (
               <div className="sync-ignored">
                 忽略 {result.unsupported} 个本应用不支持的远端条目（Joplin 修订历史等）。
