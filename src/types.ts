@@ -130,6 +130,8 @@ export interface SyncResult {
   uploaded: number;
   deletedRemote: number;
   deletedLocal: number;
+  conflicts: number;
+  conflictNotes: string[];
   skipped: number;
   resourcesDown: number;
   resourcesUp: number;

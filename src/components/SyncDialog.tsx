@@ -216,6 +216,20 @@ export default function SyncDialog({
                 这些文件在服务器上保持原样，不会被下载、修改或删除。
               </div>
             )}
+            {result.conflicts > 0 && (
+              <div className="sync-conflicts">
+                <div>
+                  ⚠ {result.conflicts} 篇笔记在两端都被修改过：较新的一份保留原笔记，
+                  另一份已存为「…（冲突副本 时间）」并同步到服务器，两份内容都没有丢失。
+                </div>
+                {result.conflictNotes.slice(0, 5).map((n, i) => (
+                  <div key={i}>· {n}</div>
+                ))}
+                {result.conflictNotes.length > 5 && (
+                  <div>… 另有 {result.conflictNotes.length - 5} 条</div>
+                )}
+              </div>
+            )}
             {result.message && <div className="sync-message">{result.message}</div>}
             {result.errors.length > 0 && (
               <div className="sync-errors">

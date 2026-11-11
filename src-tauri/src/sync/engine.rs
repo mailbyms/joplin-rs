@@ -5,6 +5,10 @@
 //! * `info.json` must be sync version 3 with E2EE off.
 //! * Remote items are `<id>.md`; resources also have `.resource/<id>` blobs.
 //! * For every id present on either side, the newer `updated_time` wins.
+//! * Exception — notes edited on *both* sides since the last sync: the newer
+//!   revision keeps the original id and the other one is preserved as a
+//!   separate "conflict copy" note (`is_conflict = 1`), so neither edit is
+//!   silently overwritten. See [`conflict_copy`].
 //! * A remote item that disappeared only deletes the local copy when our sync
 //!   state proves the local copy has not been edited since the last sync.
 //! * Local deletions recorded in `deleted_items` are propagated to the server
@@ -16,7 +20,8 @@ use crate::{
     sync::{
         protocol::{
             check_info_json, is_item_filename, is_resource_id, parse_item, peek_type,
-            serialize_item, table_for_type, type_for_table, SyncItem, TYPE_RESOURCE, INFO_JSON,
+            serialize_item, table_for_type, type_for_table, SyncItem, TYPE_NOTE, TYPE_RESOURCE,
+            INFO_JSON,
         },
         webdav::{RemoteFile, WebDav},
         SyncConfig,
@@ -52,6 +57,11 @@ pub struct SyncResult {
     pub uploaded: usize,
     pub deleted_remote: usize,
     pub deleted_local: usize,
+    /// Notes that were edited on both sides since the last sync. The losing
+    /// revision is kept as a separate conflict copy, so nothing is lost.
+    pub conflicts: usize,
+    /// Human-readable one-liner per conflict, shown in the sync dialog.
+    pub conflict_notes: Vec<String>,
     pub skipped: usize,
     pub resources_down: usize,
     pub resources_up: usize,
@@ -346,6 +356,109 @@ fn soft_delete_local(conn: &Connection, item: &SyncItem) -> Result<()> {
     Ok(())
 }
 
+/// `2026-11-11 19:12` — local time, so the title reads naturally in the list.
+fn conflict_stamp(at: i64) -> String {
+    use chrono::TimeZone;
+    chrono::Local
+        .timestamp_millis_opt(at)
+        .single()
+        .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
+        .unwrap_or_else(|| at.to_string())
+}
+
+fn conflict_title(original: &str, at: i64) -> String {
+    let base = original.trim();
+    let base = if base.is_empty() { "无标题笔记" } else { base };
+    format!("{base}（冲突副本 {}）", conflict_stamp(at))
+}
+
+/// True when two revisions carry the same visible content. Equal
+/// `updated_time`s are not required: a client may rewrite the file (or bump
+/// the timestamp) without changing a single character, and duplicating such a
+/// note would only add noise.
+fn same_note_content(a: &SyncItem, b: &SyncItem) -> bool {
+    a.title == b.title && a.body == b.body
+}
+
+/// Build the "loser" of a conflict as a brand-new note.
+///
+/// Two clients editing the same note is a real possibility (desktop + phone,
+/// or two machines). Plain last-writer-wins destroys the other edit, so the
+/// revision that loses the `updated_time` comparison is re-materialised under
+/// a fresh 32-hex id, flagged `is_conflict = 1` (the column the official
+/// client also uses) and titled after the original with a timestamp. Both
+/// sides then converge on two notes instead of one silently-clobbered one.
+fn conflict_copy(loser: &SyncItem, now: i64) -> SyncItem {
+    let mut fields = loser.fields.clone();
+    // `type_` is a private property written by `serialize_item` itself;
+    // keeping the parsed copy would emit a duplicate line on upload.
+    fields.remove("type_");
+    fields.remove("id");
+    fields.insert("created_time".into(), now.to_string());
+    fields.insert("updated_time".into(), now.to_string());
+    fields.insert("user_created_time".into(), now.to_string());
+    fields.insert("user_updated_time".into(), now.to_string());
+    fields.insert("is_conflict".into(), "1".into());
+    fields.insert("conflict_original_id".into(), loser.id.clone());
+    fields.insert("deleted_time".into(), "0".into());
+    fields.insert("encryption_applied".into(), "0".into());
+    SyncItem {
+        id: uuid::Uuid::new_v4().simple().to_string(),
+        type_: TYPE_NOTE,
+        title: conflict_title(&loser.title, now),
+        body: loser.body.clone(),
+        fields,
+    }
+}
+
+/// Which side of a two-sided item wins when neither has a conflict to preserve.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Merge {
+    TakeRemote,
+    TakeLocal,
+    InSync,
+}
+
+/// Newer `updated_time` wins; equal timestamps mean nothing to do.
+fn merge_decision(local: &SyncItem, remote: &SyncItem) -> Merge {
+    let lu = local.updated_time();
+    let ru = remote.updated_time();
+    if ru > lu {
+        Merge::TakeRemote
+    } else if lu > ru {
+        Merge::TakeLocal
+    } else {
+        Merge::InSync
+    }
+}
+
+/// A genuine conflict: a note that this client modified *and* that somebody
+/// else modified on the sync target since the last time we reconciled it.
+///
+/// `prev` is the sync-state row written by the previous run, holding the
+/// `updated_time` each side had back then. Without that row (first sync of the
+/// id, or a database that predates state tracking) two-sided edits are
+/// indistinguishable from a plain one-sided one, and we fall back to
+/// last-writer-wins instead of spraying conflict copies.
+fn is_conflict(local: &SyncItem, remote: &SyncItem, prev: Option<&StateRow>) -> bool {
+    // Duplicating a folder forks the tree and duplicating an attachment costs
+    // storage for identical bytes, so only notes get a conflict copy.
+    if local.type_ != TYPE_NOTE {
+        return false;
+    }
+    let lu = local.updated_time();
+    let ru = remote.updated_time();
+    if lu == ru {
+        return false;
+    }
+    let Some(prev) = prev else {
+        return false;
+    };
+    let local_changed = prev.local_updated_time != lu;
+    let remote_changed = prev.remote_updated_time != ru;
+    local_changed && remote_changed && !same_note_content(local, remote)
+}
+
 /// Older Joplin profiles leave `resources.file_extension` empty even though the
 /// blob on disk is named `<id>.png`. In that case fall back to a prefix scan.
 /// 45 of the 143 attachments in the reference profile are affected.
@@ -623,7 +736,39 @@ pub fn run(
             (Some(local_item), Some(remote_item)) => {
                 let lu = local_item.updated_time();
                 let ru = remote_item.updated_time();
-                if ru > lu {
+                // The state row records the `updated_time` both sides had when
+                // the item was last reconciled; that is what separates a real
+                // two-sided edit from an ordinary upload/download.
+                let prev = state.get(id);
+                let conflict = is_conflict(local_item, remote_item, prev);
+                // Newer wins (also the fallback when there is no state row,
+                // i.e. the very first sync of an id).
+                let merge = merge_decision(local_item, remote_item);
+                let download = merge == Merge::TakeRemote;
+                let upload = merge == Merge::TakeLocal;
+                if conflict {
+                    let now = now_ms();
+                    let loser = if download { local_item } else { remote_item };
+                    let copy = conflict_copy(loser, now);
+                    // Write the preserved revision into the working copy and
+                    // push it to the server in the same run. Deliberately no
+                    // sync-state row: if the upload fails, the next run must
+                    // still see it as a new local note instead of mistaking it
+                    // for a remotely deleted one.
+                    to_apply.push(copy.clone());
+                    to_upload.push(copy);
+                    result.conflicts += 1;
+                    result.conflict_notes.push(format!(
+                        "「{}」两端都有修改，已保留较新的一份，另一份另存为「{}」",
+                        if local_item.title.trim().is_empty() {
+                            local_item.id.as_str()
+                        } else {
+                            local_item.title.trim()
+                        },
+                        conflict_title(&loser.title, now)
+                    ));
+                }
+                if download {
                     to_apply.push(remote_item.clone());
                     result.downloaded += 1;
                     if remote_item.type_ == TYPE_RESOURCE {
@@ -638,7 +783,7 @@ pub fn run(
                             local_updated_time: ru,
                         },
                     );
-                } else if lu > ru {
+                } else if upload {
                     to_upload.push(local_item.clone());
                     result.uploaded += 1;
                     if local_item.type_ == TYPE_RESOURCE {
@@ -710,11 +855,16 @@ pub fn run(
         0,
         1,
         format!(
-            "计划：下载 {} · 上传 {} · 本地删除 {} · 远端删除 {}{}",
+            "计划：下载 {} · 上传 {} · 本地删除 {} · 远端删除 {}{}{}",
             result.downloaded,
             result.uploaded,
             result.deleted_local,
             to_delete_remote.len(),
+            if result.conflicts > 0 {
+                format!(" · 冲突 {}", result.conflicts)
+            } else {
+                String::new()
+            },
             unsupported_note(result.unsupported, &unsupported_types)
         ),
     );
@@ -730,12 +880,17 @@ pub fn run(
             .filter(|(_, item)| find_local_resource(item, resources_dir).is_some())
             .count();
         result.message = format!(
-            "预演完成：下载 {}、上传 {}、跳过 {}、本地删除 {}、远端删除 {}{}",
+            "预演完成：下载 {}、上传 {}、跳过 {}、本地删除 {}、远端删除 {}{}{}",
             result.downloaded,
             result.uploaded,
             result.skipped,
             result.deleted_local,
             result.deleted_remote,
+            if result.conflicts > 0 {
+                format!("、冲突 {}", result.conflicts)
+            } else {
+                String::new()
+            },
             unsupported_note(result.unsupported, &unsupported_types)
         );
         return Ok(result);
@@ -880,7 +1035,7 @@ pub fn run(
 
     result.finished_at = now_ms();
     result.message = format!(
-        "同步完成：下载 {}、上传 {}、跳过 {}、本地删除 {}、远端删除 {}、附件 ↓{} ↑{}{}",
+        "同步完成：下载 {}、上传 {}、跳过 {}、本地删除 {}、远端删除 {}、附件 ↓{} ↑{}{}{}",
         result.downloaded,
         result.uploaded,
         result.skipped,
@@ -888,6 +1043,11 @@ pub fn run(
         result.deleted_remote,
         result.resources_down,
         result.resources_up,
+        if result.conflicts > 0 {
+            format!("、冲突 {}", result.conflicts)
+        } else {
+            String::new()
+        },
         unsupported_note(result.unsupported, &unsupported_types)
     );
     emit(app, "done", 1, 1, result.message.clone());
@@ -922,6 +1082,112 @@ pub fn test_connection(cfg: &SyncConfig) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn note(id: &str, title: &str, body: &str, updated: i64) -> SyncItem {
+        let mut fields = BTreeMap::new();
+        fields.insert("updated_time".into(), updated.to_string());
+        fields.insert("parent_id".into(), "0f1e2d3c4b5a69788796a5b4c3d2e1f0".into());
+        SyncItem {
+            id: id.into(),
+            type_: TYPE_NOTE,
+            title: title.into(),
+            body: body.into(),
+            fields,
+        }
+    }
+
+    fn state_row(local: i64, remote: i64) -> StateRow {
+        StateRow {
+            remote_mtime: 0,
+            remote_updated_time: remote,
+            synced_at: 1_700_000_000_000,
+            local_updated_time: local,
+        }
+    }
+
+    #[test]
+    fn flags_conflict_only_when_both_sides_changed() {
+        let id = "a1b2c3d4e5f60718293a4b5c6d7e8f90";
+        let prev = state_row(100, 100); // both sides were at updated_time 100
+
+        // Only we edited -> plain upload, no conflict.
+        let local = note(id, "标题", "本地新内容", 200);
+        let remote = note(id, "标题", "旧内容", 100);
+        assert!(!is_conflict(&local, &remote, Some(&prev)));
+        assert_eq!(merge_decision(&local, &remote), Merge::TakeLocal);
+
+        // Only the other client edited -> plain download, no conflict.
+        let local = note(id, "标题", "旧内容", 100);
+        let remote = note(id, "标题", "远端新内容", 200);
+        assert!(!is_conflict(&local, &remote, Some(&prev)));
+        assert_eq!(merge_decision(&local, &remote), Merge::TakeRemote);
+
+        // Both edited -> conflict, newer side still wins the original id.
+        let local = note(id, "标题", "本地新内容", 300);
+        let remote = note(id, "标题", "远端新内容", 200);
+        assert!(is_conflict(&local, &remote, Some(&prev)));
+        assert_eq!(merge_decision(&local, &remote), Merge::TakeLocal);
+
+        // Both edited, remote is the newer one.
+        let local = note(id, "标题", "本地新内容", 200);
+        let remote = note(id, "标题", "远端新内容", 300);
+        assert!(is_conflict(&local, &remote, Some(&prev)));
+        assert_eq!(merge_decision(&local, &remote), Merge::TakeRemote);
+    }
+
+    #[test]
+    fn no_conflict_without_state_or_for_identical_content() {
+        let id = "a1b2c3d4e5f60718293a4b5c6d7e8f90";
+        let local = note(id, "标题", "本地新内容", 300);
+        let remote = note(id, "标题", "远端新内容", 200);
+        // First sync of this id: nothing proves both sides were edited.
+        assert!(!is_conflict(&local, &remote, None));
+        // Both timestamps moved but the content is byte-identical (a client
+        // re-wrote the file without touching a character).
+        let remote_same = note(id, "标题", "本地新内容", 200);
+        assert!(!is_conflict(&local, &remote_same, Some(&state_row(100, 100))));
+        // Folders never get a conflict copy.
+        let mut folder_local = note(id, "工作", "a", 300);
+        folder_local.type_ = 2;
+        let mut folder_remote = note(id, "工作", "b", 200);
+        folder_remote.type_ = 2;
+        assert!(!is_conflict(
+            &folder_local,
+            &folder_remote,
+            Some(&state_row(100, 100))
+        ));
+    }
+
+    #[test]
+    fn conflict_copy_gets_new_id_flag_and_keeps_loser_body() {
+        let loser = note(
+            "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+            "购物清单",
+            "- 牛奶\n- 面包",
+            1_700_000_000_000,
+        );
+        let copy = conflict_copy(&loser, 1_700_000_100_000);
+        assert_eq!(copy.id.len(), 32);
+        assert_ne!(copy.id, loser.id);
+        assert!(copy.id.bytes().all(|b| b.is_ascii_hexdigit()));
+        assert_eq!(copy.type_, TYPE_NOTE);
+        assert_eq!(copy.body, "- 牛奶\n- 面包");
+        assert!(copy.title.starts_with("购物清单（冲突副本 "));
+        assert!(copy.title.ends_with("）"));
+        assert_eq!(copy.fields.get("is_conflict").map(String::as_str), Some("1"));
+        assert_eq!(
+            copy.fields.get("conflict_original_id").map(String::as_str),
+            Some("a1b2c3d4e5f60718293a4b5c6d7e8f90")
+        );
+        assert_eq!(
+            copy.fields.get("updated_time").map(String::as_str),
+            Some("1700000100000")
+        );
+        // The serialized upload must carry exactly one `type_` line.
+        let text = serialize_item(&copy);
+        assert_eq!(text.matches("type_: 1").count(), 1);
+        assert!(text.starts_with("购物清单（冲突副本"));
+    }
 
     #[test]
     fn unsupported_note_reports_types_and_is_absent_when_zero() {
