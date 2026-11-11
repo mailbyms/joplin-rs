@@ -13,6 +13,13 @@
 //!   state proves the local copy has not been edited since the last sync.
 //! * Local deletions recorded in `deleted_items` are propagated to the server
 //!   only when they happened after the previous successful sync.
+//! * Bodies are transferred over [`CONCURRENCY`] connections; a remote WebDAV
+//!   round trip costs 100-300 ms, so a sequential loop spends nearly all of its
+//!   time waiting. Resource blobs still finish uploading before the metadata
+//!   that points at them.
+//! * After uploading, the mtimes the server assigned are read back with one
+//!   PROPFIND per directory and stored in the sync state, so the next run can
+//!   skip those files instead of downloading them to learn the timestamp.
 
 use crate::{
     db::now_ms,
@@ -33,6 +40,10 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Mutex,
+    },
 };
 use tauri::{AppHandle, Emitter};
 
@@ -105,6 +116,57 @@ fn emit(app: &AppHandle, phase: &str, current: usize, total: usize, message: imp
             message: message.into(),
         },
     );
+}
+
+/// How many WebDAV requests may be in flight at once.
+///
+/// Joplin uses `sync.maxConcurrentConnections`, default 5. A remote WebDAV
+/// round trip is 100-300 ms, so a strictly sequential loop spends nearly all
+/// of its wall-clock time waiting; the bodies themselves are independent.
+/// Six keeps the improvement close to the theoretical factor without looking
+/// like a download burst to the host (Nextcloud/坚果云 rate-limit aggressive
+/// clients).
+const CONCURRENCY: usize = 6;
+
+/// Run `f` over `items` on up to `concurrency` threads, returning the results
+/// in the same order as the input.
+///
+/// Results are collected through a mutex-guarded slot vector rather than
+/// returned per thread, so callers can pair them with their input by index.
+/// `f` must be `Sync`; both the WebDAV client and `AppHandle` are.
+fn parallel_map<T, R, F>(items: &[T], concurrency: usize, f: F) -> Vec<R>
+where
+    T: Sync,
+    R: Send,
+    F: Fn(&T) -> R + Sync,
+{
+    let n = items.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let workers = concurrency.clamp(1, n);
+    let next = AtomicUsize::new(0);
+    let slots: Mutex<Vec<Option<R>>> = Mutex::new((0..n).map(|_| None).collect());
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            scope.spawn(|| loop {
+                let i = next.fetch_add(1, Ordering::Relaxed);
+                if i >= n {
+                    break;
+                }
+                let value = f(&items[i]);
+                if let Ok(mut guard) = slots.lock() {
+                    guard[i] = Some(value);
+                }
+            });
+        }
+    });
+    slots
+        .into_inner()
+        .unwrap_or_else(|e| e.into_inner())
+        .into_iter()
+        .map(|slot| slot.expect("every index is filled by exactly one worker"))
+        .collect()
 }
 
 fn table_columns(conn: &Connection, table: &str) -> Result<Vec<String>> {
@@ -507,6 +569,65 @@ fn find_local_resource(item: &SyncItem, resources_dir: &Path) -> Option<PathBuf>
         .or_else(|| local_resource_path(item, &app_resource_dir()))
 }
 
+/// Ask the server which mtime it stored for a batch of freshly uploaded items,
+/// in a single PROPFIND, and write those values into the sync state.
+///
+/// Uploaded items get a state row with `remote_mtime = 0`, because only the
+/// server knows the value it assigns. Left that way, the *next* sync misses the
+/// mtime cache for every file this client just pushed and re-downloads all of
+/// them just to learn a number the server will hand back in one listing.
+/// Returns any errors instead of failing the sync: this is an optimisation, and
+/// a miss only costs one extra GET on the following run.
+fn backfill_remote_mtime(
+    dav: &WebDav,
+    conn: &Connection,
+    dir: &str,
+    ids: &[String],
+) -> Vec<String> {
+    let mut errors = Vec::new();
+    let listing = match dav.propfind(dir, "1") {
+        Ok(listing) => listing,
+        Err(e) => {
+            errors.push(format!("回填远端时间戳失败: {e}"));
+            return errors;
+        }
+    };
+    let by_name: HashMap<&str, i64> = listing
+        .iter()
+        .filter(|f| !f.is_dir && f.mtime_ms > 0)
+        .map(|f| (f.name.as_str(), f.mtime_ms))
+        .collect();
+    let tx = match conn.unchecked_transaction() {
+        Ok(tx) => tx,
+        Err(e) => {
+            errors.push(format!("回填远端时间戳失败: {e}"));
+            return errors;
+        }
+    };
+    for id in ids {
+        // Metadata files live at `<id>.md` in the root; blobs are the bare id
+        // inside `.resource/`.
+        let name = if dir.is_empty() {
+            format!("{id}.md")
+        } else {
+            id.clone()
+        };
+        let Some(mtime) = by_name.get(name.as_str()).copied() else {
+            continue;
+        };
+        if let Err(e) = tx.execute(
+            "UPDATE joplin_rs_sync_state SET remote_mtime = ?2 WHERE item_id = ?1",
+            params![id, mtime],
+        ) {
+            errors.push(format!("回填同步状态 {id} 失败: {e}"));
+        }
+    }
+    if let Err(e) = tx.commit() {
+        errors.push(format!("回填远端时间戳失败: {e}"));
+    }
+    errors
+}
+
 pub fn run(
     app: &AppHandle,
     work_db: &Path,
@@ -597,71 +718,86 @@ pub fn run(
     let mut remote: HashMap<String, (SyncItem, i64)> = HashMap::new();
     let mut unsupported_types: BTreeMap<i64, usize> = BTreeMap::new();
     let total = remote_files.len();
-    for (i, f) in remote_files.iter().enumerate() {
-        // Report at the top of the iteration: files whose mtime matches the
-        // sync state are `continue`d below, so a trailing emit would stop the
-        // counter at the last *uncached* file and never reach `total`.
-        if i % 50 == 0 || i + 1 == total {
-            emit(
-                app,
-                "download",
-                i + 1,
-                total,
-                format!("已获取条目：{}/{}", i + 1, total),
-            );
-        }
+
+    // Pass 1 — reuse cached metadata without any request. A state row whose
+    // `remote_mtime` matches the listing exactly proves the file did not change
+    // since we last reconciled it, so its body never has to be fetched again.
+    let mut to_fetch: Vec<&RemoteFile> = Vec::with_capacity(total);
+    for f in &remote_files {
         let id = f.name.trim_end_matches(".md").to_string();
         if let Some(s) = state.get(&id) {
             if s.remote_mtime > 0 && s.remote_mtime == f.mtime_ms {
-                // Reuse the cached item metadata without a GET.
                 if let Some(item) = local.get(&id) {
                     let mut cached = item.clone();
                     cached
                         .fields
                         .insert("updated_time".into(), s.remote_updated_time.to_string());
-                    remote.insert(id.clone(), (cached, f.mtime_ms));
+                    remote.insert(id, (cached, f.mtime_ms));
+                    continue;
                 }
             }
         }
-        if remote.contains_key(&id) {
-            continue;
+        to_fetch.push(f);
+    }
+    let cached_count = remote.len();
+    let fetch_total = to_fetch.len();
+
+    // Pass 2 — fetch the remainder over several connections. Processing still
+    // happens in listing order below, so error reporting and the unsupported
+    // type tally stay deterministic.
+    let fetched_done = AtomicUsize::new(0);
+    let fetched = parallel_map(&to_fetch, CONCURRENCY, |f| {
+        let outcome = match dav.get_text(&f.name) {
+            Ok(Some(text)) => Ok(Some(text)),
+            // A Joplin sync target also holds item types we do not model,
+            // above all note revisions (`type_=13`). Their files use a
+            // different layout (no title/body segments, quoted JSON diffs), so
+            // recognise them by their trailing `type_` property and leave them
+            // completely alone instead of letting the parser report a bogus
+            // error.
+            Ok(None) => Err("文件在列举后消失".to_string()),
+            Err(e) => Err(e.to_string()),
+        };
+        let n = fetched_done.fetch_add(1, Ordering::Relaxed) + 1;
+        if n % 50 == 0 || n == fetch_total {
+            let done = (cached_count + n).min(total);
+            emit(
+                app,
+                "download",
+                done,
+                total,
+                format!("已获取条目：{done}/{total}"),
+            );
         }
-        // A Joplin sync target also holds item types we do not model, above
-        // all note revisions (`type_=13`). Their files use a different layout
-        // (no title/body segments, quoted JSON diffs), so recognise them by
-        // their trailing `type_` property and leave them completely alone
-        // instead of letting the parser report a bogus error.
-        let outcome: std::result::Result<Option<(SyncItem, i64)>, String> =
-            match dav.get_text(&f.name) {
-                Ok(Some(text)) => {
-                    match peek_type(&text).filter(|t| table_for_type(*t).is_none()) {
-                        Some(t) => {
-                            result.unsupported += 1;
-                            *unsupported_types.entry(t).or_insert(0) += 1;
-                            Ok(None)
-                        }
-                        None => parse_item(&text)
-                            .map(|item| Some((item, f.mtime_ms)))
-                            .map_err(|e| e.to_string()),
-                    }
-                }
-                Ok(None) => Err("文件在列举后消失".to_string()),
-                Err(e) => Err(e.to_string()),
-            };
+        (f.name.clone(), f.mtime_ms, outcome)
+    });
+
+    // Pass 3 — parse what came back, in the original order.
+    for (name, mtime, outcome) in fetched {
         match outcome {
-            Ok(Some((item, mtime))) => {
-                // A tombstone (`deleted_time > 0`) is Joplin's deletion marker,
-                // not a note to restore: treat it as absent so the local copy
-                // follows the ordinary remote-deletion path. Skipping this made
-                // deleted notes re-apply on every sync — their rows are hidden
-                // from `local` by `deleted_time = 0`, so the `(None, Some)` arm
-                // kept counting them as fresh downloads.
-                if !item.is_tombstone() {
-                    remote.insert(id.clone(), (item, mtime));
+            Ok(Some(text)) => match peek_type(&text).filter(|t| table_for_type(*t).is_none()) {
+                Some(t) => {
+                    result.unsupported += 1;
+                    *unsupported_types.entry(t).or_insert(0) += 1;
                 }
-            }
+                None => match parse_item(&text) {
+                    Ok(item) => {
+                        // A tombstone (`deleted_time > 0`) is Joplin's deletion
+                        // marker, not a note to restore: treat it as absent so
+                        // the local copy follows the ordinary remote-deletion
+                        // path. Skipping this made deleted notes re-apply on
+                        // every sync — their rows are hidden from `local` by
+                        // `deleted_time = 0`, so the `(None, Some)` arm kept
+                        // counting them as fresh downloads.
+                        if !item.is_tombstone() {
+                            remote.insert(name.trim_end_matches(".md").to_string(), (item, mtime));
+                        }
+                    }
+                    Err(e) => result.errors.push(format!("{name}: {e}")),
+                },
+            },
             Ok(None) => {}
-            Err(e) => result.errors.push(format!("{}: {e}", f.name)),
+            Err(e) => result.errors.push(format!("{name}: {e}")),
         }
     }
 
@@ -966,36 +1102,48 @@ pub fn run(
     // Joplin puts a resource's binary before its `<id>.md` metadata: once
     // another client sees the metadata it must already be able to fetch the
     // blob. Upload every blob first, then every metadata file.
-    for (id, item) in &resources_to_put {
+    let blob_puts = parallel_map(&resources_to_put, CONCURRENCY, |(id, item)| -> Result<()> {
         let Some(path) = find_local_resource(item, resources_dir) else {
             // A metadata row without a local blob used to be skipped silently,
             // showing "附件 ↑0" with no hint about what went wrong.
-            result
-                .errors
-                .push(format!("附件 {id} 的本地文件不存在，无法上传"));
-            continue;
+            return Err(err(format!("附件 {id} 的本地文件不存在，无法上传")));
         };
-        match fs::read(&path) {
-            Ok(bytes) => match dav.put(&format!(".resource/{id}"), &bytes) {
-                Ok(()) => result.resources_up += 1,
-                Err(e) => result.errors.push(e.to_string()),
-            },
-            Err(e) => result.errors.push(format!("读取本地资源 {id} 失败: {e}")),
+        let bytes = fs::read(&path).map_err(|e| err(format!("读取本地资源 {id} 失败: {e}")))?;
+        dav.put(&format!(".resource/{id}"), &bytes)
+    });
+    let mut uploaded_blobs: Vec<String> = Vec::new();
+    for ((id, _), outcome) in resources_to_put.iter().zip(blob_puts) {
+        match outcome {
+            Ok(()) => {
+                result.resources_up += 1;
+                uploaded_blobs.push(id.clone());
+            }
+            Err(e) => result.errors.push(e.to_string()),
         }
     }
-    for (i, item) in to_upload.iter().enumerate() {
+
+    let upload_total = to_upload.len();
+    let uploads_done = AtomicUsize::new(0);
+    let metadata_puts = parallel_map(&to_upload, CONCURRENCY, |item| {
         let text = serialize_item(item);
-        if let Err(e) = dav.put(&format!("{}.md", item.id), text.as_bytes()) {
-            result.errors.push(e.to_string());
-        }
-        if i % 50 == 0 || i + 1 == to_upload.len() {
+        let outcome = dav.put(&format!("{}.md", item.id), text.as_bytes());
+        let n = uploads_done.fetch_add(1, Ordering::Relaxed) + 1;
+        if n % 50 == 0 || n == upload_total {
             emit(
                 app,
                 "upload",
-                i + 1,
-                to_upload.len(),
-                format!("已上传条目：{}/{}", i + 1, to_upload.len()),
+                n,
+                upload_total,
+                format!("已上传条目：{n}/{upload_total}"),
             );
+        }
+        (item.id.clone(), outcome)
+    });
+    let mut uploaded_ids: Vec<String> = Vec::new();
+    for (id, outcome) in metadata_puts {
+        match outcome {
+            Ok(()) => uploaded_ids.push(id),
+            Err(e) => result.errors.push(e.to_string()),
         }
     }
     let mut cleared_deletes: Vec<String> = already_gone;
@@ -1028,30 +1176,52 @@ pub fn run(
         );
     }
 
+    // Uploaded state rows were written with `remote_mtime = 0`; learn what the
+    // server actually stored so the next sync can skip these files instead of
+    // downloading them again. One PROPFIND per directory covers the batch.
+    if !uploaded_ids.is_empty() {
+        result
+            .errors
+            .extend(backfill_remote_mtime(&dav, &conn, "", &uploaded_ids));
+    }
+    if !uploaded_blobs.is_empty() {
+        result.errors.extend(backfill_remote_mtime(
+            &dav,
+            &conn,
+            ".resource",
+            &uploaded_blobs,
+        ));
+    }
+
     // --- Download resource blobs into our own app-data resources directory. ---
     let target_dir = app_resource_dir();
     if !resources_to_get.is_empty() {
         fs::create_dir_all(&target_dir)
             .map_err(|e| err(format!("创建资源目录失败: {e}")))?;
     }
-    for (id, item) in &resources_to_get {
+    let got_blobs = parallel_map(&resources_to_get, CONCURRENCY, |(id, item)| -> Result<bool> {
         if !remote_blobs.contains(id) {
-            continue;
+            return Ok(false);
         }
-        match dav.get(&format!(".resource/{id}")) {
-            Ok(Some(bytes)) => {
-                let ext = item.fields.get("file_extension").cloned().unwrap_or_default();
-                let name = if ext.is_empty() {
-                    id.clone()
-                } else {
-                    format!("{id}.{ext}")
-                };
-                match fs::write(target_dir.join(name), bytes) {
-                    Ok(()) => result.resources_down += 1,
-                    Err(e) => result.errors.push(format!("保存资源 {id} 失败: {e}")),
-                }
-            }
-            Ok(None) => {}
+        let bytes = match dav.get(&format!(".resource/{id}")) {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => return Ok(false),
+            Err(e) => return Err(err(e.to_string())),
+        };
+        let ext = item.fields.get("file_extension").cloned().unwrap_or_default();
+        let name = if ext.is_empty() {
+            id.clone()
+        } else {
+            format!("{id}.{ext}")
+        };
+        fs::write(target_dir.join(name), bytes)
+            .map_err(|e| err(format!("保存资源 {id} 失败: {e}")))?;
+        Ok(true)
+    });
+    for outcome in got_blobs {
+        match outcome {
+            Ok(true) => result.resources_down += 1,
+            Ok(false) => {}
             Err(e) => result.errors.push(e.to_string()),
         }
     }
@@ -1295,5 +1465,44 @@ mod tests {
         assert_eq!(source, "joplin-desktop");
         assert_eq!(created, 1);
         assert_eq!(updated, 999);
+    }
+
+    #[test]
+    fn parallel_map_returns_results_in_input_order() {
+        // The upload/download loops pair results back with their input by
+        // index, so ordering is part of the contract, not a nicety.
+        let items: Vec<usize> = (0..97).collect();
+        let out = parallel_map(&items, 6, |n| n * 2);
+        let expected: Vec<usize> = items.iter().map(|n| n * 2).collect();
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn parallel_map_covers_every_item() {
+        let items: Vec<usize> = (0..5).collect();
+        assert_eq!(parallel_map(&items, 1, |n| n + 1), vec![1, 2, 3, 4, 5]);
+        assert_eq!(parallel_map(&items, 16, |n| *n), items);
+        assert!(parallel_map::<usize, usize, _>(&[], 4, |n| *n).is_empty());
+    }
+
+    #[test]
+    fn parallel_map_keeps_outcomes_attached_to_their_index() {
+        // Failures must not drift to another item's slot: the sync loops use
+        // the index to decide which id gets counted and which gets an error.
+        let items: Vec<usize> = (0..20).collect();
+        let out = parallel_map(&items, 5, |n| {
+            if n % 7 == 3 {
+                Err(format!("item {n}"))
+            } else {
+                Ok(*n)
+            }
+        });
+        for (i, outcome) in out.iter().enumerate() {
+            if i % 7 == 3 {
+                assert_eq!(outcome.as_ref().unwrap_err(), &format!("item {i}"));
+            } else {
+                assert_eq!(*outcome.as_ref().unwrap(), i);
+            }
+        }
     }
 }
