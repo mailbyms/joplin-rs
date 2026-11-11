@@ -1,6 +1,6 @@
 [package]
 name = "joplin-rs"
-version = "0.2.3"
+version = "0.2.4"
 description = "A memory-light, Joplin-compatible note app built with Rust and Tauri 2"
 edition = "2021"
 rust-version = "1.85"

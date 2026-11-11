@@ -230,8 +230,17 @@ pub fn parse_item(content: &str) -> Result<SyncItem> {
 
 /// Serialize a database item into the exact text Joplin writes.
 pub fn serialize_item(item: &SyncItem) -> String {
-    let mut props: Vec<String> = Vec::with_capacity(item.fields.len() + 1);
+    let mut props: Vec<String> = Vec::with_capacity(item.fields.len() + 2);
+    // `id` and `type_` are structural properties, not free-form fields: Joplin
+    // reads them back as `item.id` / `item.type_` and refuses to store an item
+    // without them ("Invalid parameters in updateSyncTimeQueries"). Always emit
+    // exactly one of each — `fields` may either carry a stale copy (parsed from
+    // a remote file) or have had it stripped (freshly built conflict copies).
+    props.push(format!("id: {}", item.id));
     for (key, value) in &item.fields {
+        if key == "id" || key == "type_" {
+            continue;
+        }
         let v = if TIME_KEYS_WRITE.contains(&key.as_str()) {
             ms_to_iso(value)
         } else {
@@ -319,6 +328,44 @@ mod tests {
         assert_eq!(parsed.body, "- [ ] 牛奶\n\n第二段: 不是属性");
         assert_eq!(parsed.updated_time(), 1709337600000);
         assert_eq!(parsed.type_, TYPE_NOTE);
+    }
+
+    #[test]
+    fn serialize_emits_id_exactly_once() {
+        // Regression: conflict copies strip `id` from `fields` before upload, so
+        // serialising `fields` alone produced a file without an `id` property.
+        // The official client then rejected it with
+        // "Invalid parameters in updateSyncTimeQueries()".
+        let mut fields = BTreeMap::new();
+        fields.insert("id".into(), "a1b2c3d4e5f60718293a4b5c6d7e8f90".into());
+        fields.insert("parent_id".into(), "0f1e2d3c4b5a69788796a5b4c3d2e1f0".into());
+        fields.insert("updated_time".into(), "1709337600000".into());
+        let item = SyncItem {
+            id: "ffffffffffffffffffffffffffffffff".into(),
+            type_: TYPE_NOTE,
+            title: "标题".into(),
+            body: "正文".into(),
+            fields,
+        };
+        let text = serialize_item(&item);
+        let id_lines: Vec<&str> = text.lines().filter(|l| l.starts_with("id: ")).collect();
+        assert_eq!(id_lines, vec!["id: ffffffffffffffffffffffffffffffff"]);
+        // The struct field wins over a stale copy left in `fields`.
+        assert_eq!(parse_item(&text).unwrap().id, item.id);
+
+        // Conflict-copy shape: no id in `fields` at all, still gets one.
+        let mut bare = BTreeMap::new();
+        bare.insert("is_conflict".into(), "1".into());
+        let copy = SyncItem {
+            id: "0123456789abcdef0123456789abcdef".into(),
+            type_: TYPE_NOTE,
+            title: "标题（冲突副本）".into(),
+            body: "正文".into(),
+            fields: bare,
+        };
+        let text = serialize_item(&copy);
+        assert_eq!(text.lines().filter(|l| l.starts_with("id: ")).count(), 1);
+        assert_eq!(parse_item(&text).unwrap().id, copy.id);
     }
 
     #[test]
