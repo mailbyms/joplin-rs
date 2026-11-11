@@ -86,6 +86,40 @@ function canonicalImageAlt(markdown: string): string {
 }
 
 /**
+ * `preset-commonmark` keeps an empty paragraph by serialising it as a lone
+ * `<br />` html node (its `EMPTY_LINE_PLACEHOLDER`); `remarkPreserveEmptyLine`
+ * folds that back into an empty paragraph when parsing. Pressing Enter twice
+ * therefore makes `getMarkdown()` emit `<br />` on its own line.
+ *
+ * Saving that literal is wrong twice over: it pollutes the Markdown synced to
+ * Joplin, and the raw-HTML guard below locks the note read-only on the next
+ * open ("第 x 行含原始 HTML"). Drop placeholder lines from the body so it stays
+ * plain Markdown. A `<br />` inside a fenced code block is user content and
+ * must survive, hence the fence tracking; a hand-written inline `<br>` is not
+ * a whole line and is untouched as well.
+ */
+const BR_PLACEHOLDER = /<br\s*\/?\s*>/gi;
+const BR_PLACEHOLDER_LINE = /^[ \t]*<br\s*\/?>[ \t]*$/i;
+const FENCE_MARKER = /^\s*(`{3,}|~{3,})/;
+
+function canonicalEditorMarkdown(markdown: string): string {
+  const canonical = canonicalImageAlt(markdown);
+  if (!/<br/i.test(canonical)) return canonical;
+  const lines: string[] = [];
+  let fence = "";
+  for (const line of canonical.split("\n")) {
+    const marker = FENCE_MARKER.exec(line)?.[1]?.[0];
+    if (marker) {
+      if (!fence) fence = marker;
+      else if (fence === marker) fence = "";
+    }
+    if (!fence && BR_PLACEHOLDER_LINE.test(line)) continue;
+    lines.push(line);
+  }
+  return lines.join("\n");
+}
+
+/**
  * Blanks fenced blocks and inline code **in place** — every character becomes a
  * space but line breaks stay — so a match offset in the result still maps back
  * to the line the user sees in 源码 mode. (`unsafeRoundTrip` used to strip code
@@ -125,7 +159,9 @@ export interface RoundTripIssue {
  *
  * The `(?<!\\)` skips escaped brackets (`\<VirtualHost …\>`), which are literal
  * text in Markdown — Apache/nginx config snippets in notes are usually written
- * that way and are not HTML at all.
+ * that way and are not HTML at all. A lone `<br>` is excluded separately in
+ * `unsafeRoundTrip`: it is Milkdown's empty-paragraph placeholder, not markup
+ * the round-trip could lose.
  */
 const HTML_TAG = /(?<!\\)(?:<!--|<![A-Za-z]|<\/?[A-Za-z][A-Za-z0-9-]*(?=[\s/>]))/;
 
@@ -140,9 +176,15 @@ export function unsafeRoundTrip(src: string, round: string): RoundTripIssue | nu
     return { reason: "YAML front matter", line: 1 };
   }
   const masked = maskCode(src);
-  const html = HTML_TAG.exec(masked);
+  // `<br>` in any spelling is either Milkdown's empty-line placeholder or a
+  // hand-written break that remark keeps as an html node. Neither is markup
+  // the round-trip would swallow, so blank it before the guard — otherwise a
+  // note saved after pressing Enter twice is locked read-only on next open.
+  // Replace with equal-length spaces so match offsets / line numbers survive.
+  const prose = masked.replace(BR_PLACEHOLDER, (m) => " ".repeat(m.length));
+  const html = HTML_TAG.exec(prose);
   if (html) {
-    return { reason: "原始 HTML", line: lineOf(masked, html.index) };
+    return { reason: "原始 HTML", line: lineOf(prose, html.index) };
   }
   if (joplinIds(src) !== joplinIds(round)) {
     return { reason: "Joplin 附件或内部笔记链接", line: 0 };
@@ -274,7 +316,7 @@ export default function WysiwygEditor({
     crepe.on((listener) => {
       listener.markdownUpdated((_ctx, markdown) => {
         if (!ready || cancelled) return;
-        const next = canonicalImageAlt(markdown);
+        const next = canonicalEditorMarkdown(markdown);
         if (next === lastMarkdown) return;
         lastMarkdown = next;
         onChangeRef.current(next);
@@ -328,8 +370,8 @@ export default function WysiwygEditor({
         crepe.setReadonly(true);
       } else {
         if (
-          canonicalImageAlt(round).replace(/\r\n/g, "\n").trim() !==
-          value.replace(/\r\n/g, "\n").trim()
+          canonicalEditorMarkdown(round).replace(/\r\n/g, "\n").trim() !==
+          canonicalEditorMarkdown(value).replace(/\r\n/g, "\n").trim()
         ) {
           setNotice(
             "该视图会规范化 Markdown 排版（列表符号、空行等），内容不会丢失。",
