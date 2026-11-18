@@ -7,6 +7,10 @@ interface Props {
   activeId: string | null;
   /** Card whose context menu is open — highlighted so the menu has an anchor. */
   contextId: string | null;
+  /** Recycle-bin list: read-only cards, deletion dates, no drag-to-move. */
+  trash?: boolean;
+  /** A new note needs a real notebook, so the button is off in the bin. */
+  canCreate?: boolean;
   searchValue: string;
   searchRef: RefObject<HTMLInputElement | null>;
   onSearchChange: (value: string) => void;
@@ -32,6 +36,8 @@ export default function NoteList({
   notes,
   activeId,
   contextId,
+  trash = false,
+  canCreate = true,
   searchValue,
   searchRef,
   onSearchChange,
@@ -67,7 +73,8 @@ export default function NoteList({
         </div>
         <button
           className="list-new-btn"
-          title="新建笔记（Ctrl+N）"
+          title={canCreate ? "新建笔记（Ctrl+N）" : "回收站中不能新建笔记"}
+          disabled={!canCreate}
           onClick={onNew}
         >
           ＋ 新建笔记
@@ -75,20 +82,24 @@ export default function NoteList({
       </header>
       <div className="list-scroll">
         {notes.length === 0 && (
-          <div className="list-empty">这里还没有笔记</div>
+          <div className="list-empty">
+            {trash ? "回收站是空的" : "这里还没有笔记"}
+          </div>
         )}
         {notes.map((note) => (
           <button
             key={note.id}
-            className={`note-card ${activeId === note.id ? "active" : ""} ${
-              draggingId === note.id ? "dragging" : ""
-            } ${contextId === note.id ? "context-target" : ""}`}
+            className={`note-card ${trash ? "trash-card" : ""} ${
+              activeId === note.id ? "active" : ""
+            } ${draggingId === note.id ? "dragging" : ""} ${
+              contextId === note.id ? "context-target" : ""
+            }`}
             onClick={() => onSelect(note.id)}
             onContextMenu={(e) => {
               e.preventDefault();
               onCardContext(note, e.clientX, e.clientY);
             }}
-            draggable
+            draggable={!trash}
             onDragStart={(e) => {
               e.dataTransfer.setData(NOTE_DRAG_TYPE, note.id);
               e.dataTransfer.setData("text/plain", note.title || "无标题笔记");
@@ -102,7 +113,14 @@ export default function NoteList({
                 {note.todoCompleted ? "☑ " : note.isTodo ? "☐ " : ""}
                 {note.title || "无标题笔记"}
               </span>
-              <span className="card-time">{formatTime(note.updatedTime)}</span>
+              <span
+                className="card-time"
+                title={trash ? "删除时间" : "更新时间"}
+              >
+                {trash
+                  ? `删除于 ${formatTime(note.deletedTime ?? note.updatedTime)}`
+                  : formatTime(note.updatedTime)}
+              </span>
             </div>
             <div className="card-excerpt">{note.excerpt || "空白笔记"}</div>
           </button>

@@ -5,6 +5,7 @@ import { api } from "./api";
 import { normalizeInlineImages } from "./attachments";
 import Sidebar from "./components/Sidebar";
 import NoteList from "./components/NoteList";
+import NotePreview from "./components/NotePreview";
 import ContextMenu from "./components/ContextMenu";
 import PrintSheet, { type PrintJob } from "./components/PrintSheet";
 import SyncDialog from "./components/SyncDialog";
@@ -125,13 +126,24 @@ export default function App() {
     title: string;
   } | null>(null);
 
-  // Right-click menu of the note list, plus the two things it can trigger.
+  // Right-click menus: note cards (normal or recycle-bin variants) and the
+  // recycle-bin entry under 笔记本. `trash` is captured at click time
+  // so a selection change cannot flip the menu's meaning while it is open.
   const [menu, setMenu] = useState<{
     note: NoteSummary;
     x: number;
     y: number;
+    trash: boolean;
   } | null>(null);
+  const [trashMenu, setTrashMenu] = useState<{ x: number; y: number } | null>(
+    null,
+  );
   const [pendingDelete, setPendingDelete] = useState<NoteSummary | null>(null);
+  const [pendingPurge, setPendingPurge] = useState<
+    | { kind: "note"; note: NoteSummary }
+    | { kind: "all"; count: number }
+    | null
+  >(null);
   const [printJob, setPrintJob] = useState<PrintJob | null>(null);
   const [pdfBusy, setPdfBusy] = useState(false);
   // Non-error feedback ("已导出 PDF …"); the `error` toast stays reserved for
@@ -158,12 +170,32 @@ export default function App() {
   const renderTimer = useRef<number | null>(null);
   const noticeTimer = useRef<number | null>(null);
 
+  /** Non-error feedback toast. It is anchored at the bottom right (styles.css). */
+  const showNotice = useCallback((message: string, ms = 4000) => {
+    if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
+    setNotice(message);
+    noticeTimer.current = window.setTimeout(() => setNotice(null), ms);
+  }, []);
+
+  /** Blank the editor when entering/leaving the bin: a live note must not stay
+      mounted behind the read-only preview, and vice versa. */
+  const clearEditor = useCallback(() => {
+    if (saveTimer.current) window.clearTimeout(saveTimer.current);
+    dirtyRef.current = false;
+    activeRef.current = null;
+    setActiveNote(null);
+    setRendered(null);
+    setStatus("saved");
+  }, []);
+
   const refreshNotes = useCallback(async () => {
     // Search results are managed by the search effect; never clobber them.
     if (selection.kind === "search") return;
     try {
       let list: NoteSummary[];
-      if (selection.kind === "folder") {
+      if (selection.kind === "trash") {
+        list = await api.listTrashNotes();
+      } else if (selection.kind === "folder") {
         list = await api.listNotes({ folderId: selection.id });
       } else if (selection.kind === "tag") {
         list = await api.listNotes({ tagId: selection.id });
@@ -217,6 +249,9 @@ export default function App() {
         else void refreshNotes();
         return;
       }
+      // Search leaves the bin; a deleted note must not stay open in an editable
+      // editor that has since become a normal (wysiwyg/source) view.
+      if (selection.kind === "trash") void flushSave().then(clearEditor);
       api
         .searchNotes(query)
         .then((hits) => {
@@ -308,6 +343,31 @@ export default function App() {
     [flushSave],
   );
 
+  /** A note in the recycle bin is read-only: one IPC call returns both the
+      metadata for the header and the rendered HTML for the preview pane. */
+  const openTrashNote = useCallback(
+    async (id: string) => {
+      const ticket = ++openTicket.current;
+      // Never read before the previously open note's edit has been written.
+      await flushSave();
+      try {
+        const detail = await api.getTrashNote(id);
+        if (ticket !== openTicket.current) return;
+        // `activeRef` stays null so no save path can ever write to a deleted
+        // note; `activeNote` is used only for the (disabled) title and highlight.
+        activeRef.current = null;
+        dirtyRef.current = false;
+        setActiveNote(detail.note);
+        setRendered(detail.rendered);
+        setStatus("saved");
+        setError(null);
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [flushSave],
+  );
+
   const onDraftChange = (patch: Partial<Pick<Note, "title" | "body">>) => {
     const current = activeRef.current;
     if (!current) return;
@@ -378,15 +438,92 @@ export default function App() {
           const neighbour = before[at + 1] ?? before[at - 1];
           if (neighbour && neighbour.id !== target.id) await openNote(neighbour.id);
         }
-        if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
-        setNotice(`已删除「${target.title || "无标题笔记"}」`);
-        noticeTimer.current = window.setTimeout(() => setNotice(null), 4000);
+        showNotice("已成功将笔记移动到回收站");
       } catch (e) {
         setError(String(e));
       }
     },
-    [notes, selection, searchInput, loadShell, refreshNotes, openNote],
+    [
+      notes,
+      selection,
+      searchInput,
+      loadShell,
+      refreshNotes,
+      openNote,
+      showNotice,
+    ],
   );
+
+  /** Recycle bin → 恢复笔记. The backend clears the tombstone and the queued
+      remote deletion; here we only refresh the lists and the bin badge. */
+  const restoreNote = useCallback(
+    async (target: NoteSummary) => {
+      try {
+        await api.restoreNote(target.id);
+        if (activeNote?.id === target.id) clearEditor();
+        await loadShell();
+        if (selection.kind === "search" && searchInput.trim()) {
+          setNotes(await api.searchNotes(searchInput.trim()));
+        } else {
+          await refreshNotes();
+        }
+        showNotice(`已恢复笔记「${target.title || "无标题笔记"}」`);
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [
+      activeNote?.id,
+      clearEditor,
+      loadShell,
+      selection.kind,
+      searchInput,
+      refreshNotes,
+      showNotice,
+    ],
+  );
+
+  /** Confirmation for 永久删除笔记 / 清空回收站. Both are irreversible and both
+      queue the remote deletion so WebDAV drops the `.md` on the next sync. */
+  const confirmPurge = useCallback(async () => {
+    const pending = pendingPurge;
+    if (!pending) return;
+    setPendingPurge(null);
+    try {
+      let count = 0;
+      let purgedId: string | null = null;
+      if (pending.kind === "note") {
+        await api.permanentlyDeleteNote(pending.note.id);
+        purgedId = pending.note.id;
+        count = 1;
+      } else {
+        count = await api.emptyTrash();
+      }
+      if (
+        selection.kind === "trash" &&
+        (pending.kind === "all" || activeNote?.id === purgedId)
+      ) {
+        clearEditor();
+      }
+      await loadShell();
+      await refreshNotes();
+      showNotice(
+        pending.kind === "all"
+          ? `回收站已清空（${count} 篇笔记）`
+          : `已永久删除「${pending.note.title || "无标题笔记"}」`,
+      );
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [
+    pendingPurge,
+    selection.kind,
+    activeNote?.id,
+    clearEditor,
+    loadShell,
+    refreshNotes,
+    showNotice,
+  ]);
 
   /** Context menu → 导出为 PDF.
    *
@@ -485,7 +622,13 @@ export default function App() {
     }
     try {
       const note = await api.createNote(folderId, "无标题笔记");
-      if (selection.kind === "search") {
+      if (selection.kind === "trash") {
+        // A new note belongs to a real notebook, so leave the bin first —
+        // otherwise the freshly created note would not be visible anywhere.
+        setSelection({ kind: "all" });
+        setSearchInput("");
+        setNotes(await api.listNotes({}));
+      } else if (selection.kind === "search") {
         setSearchInput("");
         setSelection({ kind: "all" });
         setNotes(await api.listNotes({}));
@@ -664,7 +807,7 @@ export default function App() {
       } else if (key === "f") {
         event.preventDefault();
         searchRef.current?.focus();
-      } else if (key === "e") {
+      } else if (key === "e" && !trashMode) {
         event.preventDefault();
         setViewMode((mode) => (mode === "source" ? "wysiwyg" : "source"));
       }
@@ -684,6 +827,7 @@ export default function App() {
   const activeFolder = activeNote
     ? folders.find((f) => f.id === activeNote.parentId)
     : undefined;
+  const trashMode = selection.kind === "trash";
 
   if (!bootstrap) {
     return <div className="loading-screen">正在读取 Joplin 数据库…</div>;
@@ -778,6 +922,8 @@ export default function App() {
           tags={tags}
           selection={selection}
           totalNotes={stats?.notes ?? 0}
+          trashCount={stats?.trashNotes ?? 0}
+          onTrashContext={(x, y) => setTrashMenu({ x, y })}
           syncConfigured={Boolean(syncStatus?.configured)}
           syncBusy={syncBusy}
           syncTitle={
@@ -790,6 +936,12 @@ export default function App() {
           syncFeed={syncFeed.join("。")}
           onSelect={(next) => {
             if (next.kind !== "search") setSearchInput("");
+            // Entering or leaving the bin swaps an editable editor for a
+            // read-only preview, so the open note must be closed (after any
+            // pending write has landed) instead of being carried over.
+            if ((next.kind === "trash") !== trashMode) {
+              void flushSave().then(clearEditor);
+            }
             setSelection(next);
           }}
           onNewFolder={(id) => void newFolder(id)}
@@ -802,12 +954,18 @@ export default function App() {
           notes={notes}
           activeId={activeNote?.id ?? null}
           contextId={menu?.note.id ?? null}
+          trash={trashMode}
+          canCreate={!trashMode}
           searchValue={searchInput}
           searchRef={searchRef}
           onSearchChange={setSearchInput}
-          onSelect={(id) => void openNote(id)}
+          onSelect={(id) =>
+            trashMode ? void openTrashNote(id) : void openNote(id)
+          }
           onNew={() => void newNote()}
-          onCardContext={(note, x, y) => setMenu({ note, x, y })}
+          onCardContext={(note, x, y) =>
+            setMenu({ note, x, y, trash: trashMode })
+          }
         />
 
         <main className="workspace">
@@ -817,7 +975,7 @@ export default function App() {
                 className="title-input"
                 value={activeNote?.title ?? ""}
                 placeholder="无标题笔记"
-                disabled={!activeNote}
+                disabled={!activeNote || trashMode}
                 onChange={(e) => onDraftChange({ title: e.target.value })}
               />
               {activeNote && (
@@ -831,6 +989,12 @@ export default function App() {
                       : undefined
                   }
                 >
+                  {trashMode && (
+                    <>
+                      <span className="trash-badge">🗑︎ 回收站 · 只读</span>
+                      <span className="title-meta-sep">·</span>
+                    </>
+                  )}
                   <span className="title-folder">
                     <span className="title-folder-icon" aria-hidden="true">
                       📖
@@ -842,23 +1006,26 @@ export default function App() {
                 </div>
               )}
               {/* The view switch rides on the title row: a whole extra row for
-                  one 36px pill wasted too much vertical space. */}
-              <div className="mode-toggle">
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={viewMode === "source"}
-                  aria-label="源码模式"
-                  title="Ctrl+E 切换（关闭时为打字机模式）"
-                  className="switch"
-                  onClick={() =>
-                    setViewMode(viewMode === "source" ? "wysiwyg" : "source")
-                  }
-                >
-                  <span className="knob" />
-                </button>
-                <span className="mode-toggle-label">源码模式</span>
-              </div>
+                  one 36px pill wasted too much vertical space. In the bin the
+                  note is read-only, so there is no mode to switch to. */}
+              {!trashMode && (
+                <div className="mode-toggle">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={viewMode === "source"}
+                    aria-label="源码模式"
+                    title="Ctrl+E 切换（关闭时为打字机模式）"
+                    className="switch"
+                    onClick={() =>
+                      setViewMode(viewMode === "source" ? "wysiwyg" : "source")
+                    }
+                  >
+                    <span className="knob" />
+                  </button>
+                  <span className="mode-toggle-label">源码模式</span>
+                </div>
+              )}
             </div>
             {activeNote && activeNote.tags.length > 0 && (
               <div className="meta-line">
@@ -869,8 +1036,20 @@ export default function App() {
             )}
           </div>
 
-          <div className={`editor-body mode-${viewMode}`}>
-            {activeNote && viewMode === "source" && (
+          <div
+            className={`editor-body ${
+              trashMode ? "mode-preview" : `mode-${viewMode}`
+            }`}
+          >
+            {trashMode && (
+              <div className="pane preview-pane">
+                <NotePreview
+                  rendered={rendered}
+                  onOpenNote={(id) => void openNote(id)}
+                />
+              </div>
+            )}
+            {!trashMode && activeNote && viewMode === "source" && (
               <div className="pane source-pane">
                 <Suspense
                   fallback={<div className="pane-loading">正在加载编辑器…</div>}
@@ -884,7 +1063,7 @@ export default function App() {
                 </Suspense>
               </div>
             )}
-            {activeNote && viewMode === "wysiwyg" && (
+            {!trashMode && activeNote && viewMode === "wysiwyg" && (
               <div className="pane wysiwyg-pane">
                 <Suspense
                   fallback={<div className="pane-loading">正在加载编辑器…</div>}
@@ -909,7 +1088,9 @@ export default function App() {
                 ? "保存中…"
                 : status === "dirty"
                   ? "未保存"
-                  : "已保存"}
+                  : trashMode
+                    ? "只读"
+                    : "已保存"}
             </span>
             <span className="status-sep">·</span>
             <span>{rendered?.wordCount ?? 0} 词</span>
@@ -999,6 +1180,8 @@ export default function App() {
               快捷键：Ctrl+N 新建 · Ctrl+S 保存并同步 · Ctrl+F 搜索 · Ctrl+E 切换源码 / 打字机
               <br />
               右键笔记卡片：导出为 PDF · 删除笔记
+              <br />
+              回收站：右键笔记可恢复 / 永久删除，右键「回收站」可清空
             </p>
             <button className="primary-btn" onClick={() => setShowAbout(false)}>
               关闭
@@ -1058,17 +1241,57 @@ export default function App() {
           x={menu.x}
           y={menu.y}
           onClose={() => setMenu(null)}
+          items={
+            menu.trash
+              ? [
+                  {
+                    label: "恢复笔记",
+                    icon: "↩",
+                    onSelect: () => void restoreNote(menu.note),
+                  },
+                  {
+                    label: "永久删除笔记",
+                    icon: "🗑",
+                    danger: true,
+                    onSelect: () =>
+                      setPendingPurge({ kind: "note", note: menu.note }),
+                  },
+                ]
+              : [
+                  {
+                    label: "导出为 PDF",
+                    icon: "⤓",
+                    onSelect: () => void exportPdf(menu.note),
+                  },
+                  {
+                    label: "删除笔记",
+                    icon: "🗑",
+                    danger: true,
+                    onSelect: () => setPendingDelete(menu.note),
+                  },
+                ]
+          }
+        />
+      )}
+
+      {trashMenu && (
+        <ContextMenu
+          x={trashMenu.x}
+          y={trashMenu.y}
+          onClose={() => setTrashMenu(null)}
           items={[
             {
-              label: "导出为 PDF",
-              icon: "⤓",
-              onSelect: () => void exportPdf(menu.note),
-            },
-            {
-              label: "删除笔记",
-              icon: "🗑",
+              label: "清空回收站",
+              icon: "🗑︎",
               danger: true,
-              onSelect: () => setPendingDelete(menu.note),
+              onSelect: () => {
+                const count = stats?.trashNotes ?? 0;
+                if (count === 0) {
+                  showNotice("回收站已经是空的");
+                  return;
+                }
+                setPendingPurge({ kind: "all", count });
+              },
             },
           ]}
         />
@@ -1082,8 +1305,7 @@ export default function App() {
           >
             <h2>删除这篇笔记？</h2>
             <p>
-              「{pendingDelete.title || "无标题笔记"}」会被移入 Joplin
-              的垃圾桶，下次同步时同步到云端；需要时可以再用官方客户端恢复。
+              「{pendingDelete.title || "无标题笔记"}」会被移入侧边栏底部的回收站，下次同步时同步到云端；需要时可以在回收站里恢复或永久删除。
             </p>
             <div className="prompt-actions">
               <button
@@ -1101,6 +1323,37 @@ export default function App() {
                 }}
               >
                 删除
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingPurge && (
+        <div className="modal-backdrop" onClick={() => setPendingPurge(null)}>
+          <div
+            className="modal confirm-dialog"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2>
+              {pendingPurge.kind === "all"
+                ? "清空回收站？"
+                : "永久删除这篇笔记？"}
+            </h2>
+            <p>
+              {pendingPurge.kind === "all"
+                ? `回收站中的 ${pendingPurge.count} 篇笔记会被彻底删除，下次同步时也会从 WebDAV 移除，此操作无法撤销。`
+                : `「${pendingPurge.note.title || "无标题笔记"}」会被彻底删除，下次同步时也会从 WebDAV 移除，此操作无法撤销。`}
+            </p>
+            <div className="prompt-actions">
+              <button
+                className="ghost-btn"
+                onClick={() => setPendingPurge(null)}
+              >
+                取消
+              </button>
+              <button className="danger-btn" onClick={() => void confirmPurge()}>
+                {pendingPurge.kind === "all" ? "清空回收站" : "永久删除"}
               </button>
             </div>
           </div>

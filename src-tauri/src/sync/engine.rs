@@ -772,7 +772,11 @@ pub fn run(
         (f.name.clone(), f.mtime_ms, outcome)
     });
 
-    // Pass 3 — parse what came back, in the original order.
+    // Pass 3 — parse what came back, in the original order. Tombstones are
+    // remembered separately: they are not notes to download, but a note we
+    // permanently deleted locally may still have one of these `.md` markers on
+    // the server, and that file has to be removed (see the delete plan below).
+    let mut remote_tombstones: HashSet<String> = HashSet::new();
     for (name, mtime, outcome) in fetched {
         match outcome {
             Ok(Some(text)) => match peek_type(&text).filter(|t| table_for_type(*t).is_none()) {
@@ -789,8 +793,11 @@ pub fn run(
                         // every sync — their rows are hidden from `local` by
                         // `deleted_time = 0`, so the `(None, Some)` arm kept
                         // counting them as fresh downloads.
-                        if !item.is_tombstone() {
-                            remote.insert(name.trim_end_matches(".md").to_string(), (item, mtime));
+                        let id = name.trim_end_matches(".md").to_string();
+                        if item.is_tombstone() {
+                            remote_tombstones.insert(id);
+                        } else {
+                            remote.insert(id, (item, mtime));
                         }
                     }
                     Err(e) => result.errors.push(format!("{name}: {e}")),
@@ -948,6 +955,16 @@ pub fn run(
                 }
             }
             (None, None) => {}
+        }
+    }
+
+    // A remote tombstone has no entry in `remote`, so the decision loop above
+    // never sees it. For an id we permanently deleted locally, add it to the
+    // remote-delete plan explicitly — otherwise the pending deletion looks
+    // "already gone" and the marker file stays on the server forever.
+    for id in &remote_tombstones {
+        if pending_deletes.contains_key(id) && !to_delete_remote.contains(id) {
+            to_delete_remote.push(id.clone());
         }
     }
 

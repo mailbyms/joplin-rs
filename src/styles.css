@@ -120,6 +120,11 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-soft
   background: var(--bg-active); color: var(--accent);
   box-shadow: inset 0 0 0 1.5px var(--accent);
 }
+/* The bin sits inside the 笔记本 section, as its last child item. A little
+   breathing room separates it from the notebook tree without turning it into
+   its own section (no heading, no divider). */
+.sidebar .trash-item { font-weight: 500; margin-top: 3px; }
+.sidebar .trash-item .nav-icon { font-size: 14px; }
 .nav-icon { width: 16px; text-align: center; color: var(--text-faint); font-size: 13px; }
 .nav-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nav-count { font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
@@ -205,6 +210,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-soft
   transition: background .15s, color .15s;
 }
 .list-new-btn:hover { background: var(--accent); color: #fff; }
+.list-new-btn:disabled { opacity: .45; cursor: not-allowed; }
+.list-new-btn:disabled:hover { background: var(--accent-soft); color: var(--accent); }
 .list-scroll { flex: 1; overflow-y: auto; padding: 8px; }
 .list-empty { padding: 40px 10px; text-align: center; color: var(--text-faint); font-size: 13px; }
 .note-card { display: block; width: 100%; text-align: left; padding: 10px 12px; margin-bottom: 4px; border-radius: 7px; border: 1px solid transparent; }
@@ -218,6 +225,9 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-soft
 .card-title { flex: 1; font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-time { font-size: 10.5px; color: var(--text-faint); white-space: nowrap; }
 .card-excerpt { margin-top: 5px; font-size: 11.5px; line-height: 1.55; color: var(--text-faint); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+/* Recycle-bin cards are read-only and carry a "删除于 …" stamp instead of
+   the edit time; a softer title keeps the bin visually secondary. */
+.note-card.trash-card .card-title { color: var(--text-soft); font-weight: 500; }
 
 /* ---------- workspace ---------- */
 .workspace { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg); }
@@ -247,6 +257,11 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-soft
   font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif;
 }
 .title-meta-sep { opacity: .55; }
+/* Read-only marker shown while a note from the recycle bin is previewed. */
+.trash-badge {
+  align-self: center; padding: 1px 7px; border-radius: 10px;
+  background: #fbeedb; color: #9a642b; font-size: 10.5px; font-weight: 600;
+}
 /* Tags only take a row when the note actually has some. */
 .meta-line { display: flex; align-items: center; gap: 10px; margin-top: 3px; line-height: 14px; }
 /* Fixed-height header: never let a long tag wrap into a third line. */
@@ -343,17 +358,23 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-soft
   box-shadow: none !important;
 }
 /* The first line sat 42.8px below the header rule: 30px of padding plus the
-   leading block's own .8em margin. Halve it — 20px of padding with no margin on
-   whatever opens the document, so a note that starts with a heading gets the
-   same 20px as one that starts with a paragraph. ProseMirror injects decoration
-   widgets (block handle, virtual cursor) as absolutely positioned first
-   children, so the leading block is either the first child itself or the one
-   right after the first widget. Only the wysiwyg surface is affected; the
-   source editor keeps its own padding. */
+   leading block's own .8em margin. Halve it — 20px of padding with no margin
+   on whatever opens the document, so a note that starts with a heading gets
+   the same 20px as one that starts with a paragraph. Only the wysiwyg surface
+   is affected; the source editor keeps its own padding. */
 .wysiwyg-host .milkdown .ProseMirror { padding: 20px 34px 120px; min-height: 60vh; }
-.wysiwyg-host .milkdown .ProseMirror > :first-child:not(.ProseMirror-widget):not(.prosemirror-virtual-cursor),
-.wysiwyg-host .milkdown .ProseMirror > .ProseMirror-widget:first-child + *,
-.wysiwyg-host .milkdown .ProseMirror > .ProseMirror-widget:first-child + .ProseMirror-widget + * {
+/* Pick the first *content* block, skipping any number of absolutely
+   positioned decoration widgets ProseMirror puts in front of it (gap cursor,
+   virtual cursor, drop cursor). The old `:first-child` + `+ *` chains covered
+   only zero/one/two `.ProseMirror-widget` children — the virtual cursor widget
+   carries a different class, so when it became the first child the rule stopped
+   matching and the leading block regained its .8em (24px for a heading) margin.
+   The whole document then jumped down mid-click, while Crepe's virtual caret
+   kept the rect it had measured before the jump: it ended up above-left of the
+   "Please enter..." placeholder on the last line. If an engine lacks
+   `:nth-child(… of …)` this single rule is simply ignored, which leaves the
+   margin constant — no jump, just 12.8px more whitespace at the top. */
+.wysiwyg-host .milkdown .ProseMirror > :nth-child(1 of :not(.ProseMirror-widget, .prosemirror-virtual-cursor, .ProseMirror-gapcursor, .crepe-drop-cursor)) {
   margin-top: 0;
 }
 /* Floating widgets are absolutely positioned against .milkdown. These rules
@@ -440,6 +461,10 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-soft
 
 /* ---------- preview ---------- */
 .preview-scroll { position: relative; height: 100%; overflow-y: auto; padding: 30px 34px 120px; }
+/* The recycle-bin preview lives in a flex pane with no intrinsic height, so
+   pin the scroller to the pane's box instead of relying on height: 100%. */
+.editor-body.mode-preview .preview-pane { position: relative; }
+.editor-body.mode-preview .preview-scroll { position: absolute; inset: 0; height: auto; }
 .preview-empty { height: 100%; display: flex; align-items: center; justify-content: center; color: var(--text-faint); }
 
 /* ---------- markdown typography ----------
@@ -578,7 +603,12 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-soft
 /* Right-hand side of the status bar: last WebDAV sync + app version. */
 .status-sync { color: var(--text-faint); font-variant-numeric: tabular-nums; }
 .status-version { color: var(--text-faint); font-variant-numeric: tabular-nums; letter-spacing: .2px; }
-.toast { position: fixed; bottom: 42px; left: 50%; transform: translateX(-50%); display: flex; gap: 16px; align-items: center; background: #14213a; color: #fff; padding: 10px 16px; border-radius: 8px; box-shadow: var(--shadow); font-size: 12.5px; max-width: 70vw; }
+/* Feedback is anchored at the bottom right, clear of the status bar. Errors
+   and confirmations share one anchor so the toast never jumps as the view
+   changes. */
+.toast { position: fixed; right: 22px; bottom: 42px; display: flex; gap: 16px; align-items: center; background: #14213a; color: #fff; padding: 10px 16px; border-radius: 8px; box-shadow: var(--shadow); font-size: 12.5px; max-width: 70vw; animation: toast-in .2s ease-out; }
+@keyframes toast-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
 .toast button { color: #fff; font-size: 16px; }
 .modal-backdrop { position: fixed; inset: 0; background: rgba(15, 25, 45, .38); display: flex; align-items: center; justify-content: center; }
 .modal { width: 520px; background: var(--bg); border-radius: 12px; padding: 26px 30px; box-shadow: var(--shadow); }

@@ -313,21 +313,21 @@ impl Db {
         let sql = match (folder_id.is_some(), tag_id.is_some()) {
             (_, true) => {
                 "SELECT n.id, n.title, COALESCE(n.parent_id,''), n.created_time, n.updated_time,
-                        n.is_todo, n.todo_completed, substr(n.body, 1, 600)
+                        n.is_todo, n.todo_completed, substr(n.body, 1, 600), n.deleted_time
                  FROM notes n JOIN note_tags nt ON nt.note_id = n.id
                  WHERE nt.tag_id = ?1 AND n.deleted_time = 0
                  ORDER BY n.updated_time DESC LIMIT ?2 OFFSET ?3"
             }
             (true, false) => {
                 "SELECT n.id, n.title, COALESCE(n.parent_id,''), n.created_time, n.updated_time,
-                        n.is_todo, n.todo_completed, substr(n.body, 1, 600)
+                        n.is_todo, n.todo_completed, substr(n.body, 1, 600), n.deleted_time
                  FROM notes n
                  WHERE n.parent_id = ?1 AND n.deleted_time = 0
                  ORDER BY n.updated_time DESC LIMIT ?2 OFFSET ?3"
             }
             (false, false) => {
                 "SELECT n.id, n.title, COALESCE(n.parent_id,''), n.created_time, n.updated_time,
-                        n.is_todo, n.todo_completed, substr(n.body, 1, 600)
+                        n.is_todo, n.todo_completed, substr(n.body, 1, 600), n.deleted_time
                  FROM notes n
                  WHERE n.deleted_time = 0
                  ORDER BY n.updated_time DESC LIMIT ?1 OFFSET ?2"
@@ -345,6 +345,7 @@ impl Db {
                 is_todo: r.get(5)?,
                 todo_completed: r.get(6)?,
                 excerpt: make_excerpt(&body, 110),
+                deleted_time: r.get(8)?,
             })
         };
         let rows = if let Some(t) = tag_id {
@@ -360,12 +361,41 @@ impl Db {
         Ok(rows)
     }
 
-    pub fn get_note(&self, id: &str) -> Result<Note> {
+    /// Everything in the recycle bin, newest deletion first. Deleted notes
+    /// keep their full row, so the same `NoteSummary` shape can be reused; the
+    /// frontend reads `deleted_time` for the "删除于 …" stamp.
+    pub fn list_trash_notes(&self) -> Result<Vec<NoteSummary>> {
         let mut stmt = self.conn.prepare(
+            "SELECT id, title, COALESCE(parent_id,''), created_time, updated_time,
+                    is_todo, todo_completed, substr(body, 1, 600), deleted_time
+             FROM notes
+             WHERE deleted_time > 0
+             ORDER BY deleted_time DESC, updated_time DESC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            let body: String = r.get(7)?;
+            Ok(NoteSummary {
+                id: r.get(0)?,
+                title: r.get(1)?,
+                parent_id: r.get(2)?,
+                created_time: r.get(3)?,
+                updated_time: r.get(4)?,
+                is_todo: r.get(5)?,
+                todo_completed: r.get(6)?,
+                excerpt: make_excerpt(&body, 110),
+                deleted_time: r.get(8)?,
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    fn read_note(&self, id: &str, condition: &str) -> Result<Note> {
+        let sql = format!(
             "SELECT id, title, body, COALESCE(parent_id,''), created_time, updated_time,
                     is_todo, todo_completed, markup_language
-             FROM notes WHERE id = ?1 AND deleted_time = 0",
-        )?;
+             FROM notes WHERE id = ?1 AND {condition}"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
         let note = stmt
             .query_row(params![id], |r| {
                 Ok(Note {
@@ -386,6 +416,17 @@ impl Db {
         let mut n = note;
         n.tags = self.tags_for_note(id)?;
         Ok(n)
+    }
+
+    pub fn get_note(&self, id: &str) -> Result<Note> {
+        self.read_note(id, "deleted_time = 0")
+    }
+
+    /// Read-only view of a note in the recycle bin. Keeping it behind a
+    /// separate accessor stops the normal editor from ever opening a deleted
+    /// note by accident.
+    pub fn get_trash_note(&self, id: &str) -> Result<Note> {
+        self.read_note(id, "deleted_time > 0")
     }
 
     pub fn tags_for_note(&self, id: &str) -> Result<Vec<String>> {
@@ -499,6 +540,128 @@ impl Db {
         Ok(())
     }
 
+    /// Recycle bin → 恢复笔记. Clears the tombstone *and* the pending remote
+    /// deletion, otherwise the next sync would delete the freshly restored
+    /// note on the server. Bumping `updated_time` makes the sync engine upload
+    /// the restored copy instead of treating the missing remote file as a
+    /// remote deletion (see `load_local_items` / `remotely_deleted`).
+    pub fn restore_note(&self, id: &str) -> Result<Note> {
+        let note = self.get_trash_note(id)?;
+        let parent_ok: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM folders
+             WHERE id = ?1 AND deleted_time = 0",
+            params![note.parent_id],
+            |r| r.get(0),
+        )?;
+        // A note whose notebook was deleted since would be invisible in every
+        // folder view; fall back to the first surviving notebook.
+        let parent_id = if parent_ok > 0 {
+            note.parent_id.clone()
+        } else {
+            self.conn
+                .query_row(
+                    "SELECT id FROM folders WHERE deleted_time = 0
+                     ORDER BY title COLLATE NOCASE LIMIT 1",
+                    [],
+                    |r| r.get::<_, String>(0),
+                )
+                .optional()?
+                .unwrap_or_else(|| note.parent_id.clone())
+        };
+        let now = now_ms();
+        let changed = self.conn.execute(
+            "UPDATE notes SET deleted_time = 0, updated_time = ?2,
+                    user_updated_time = ?2, parent_id = ?3
+             WHERE id = ?1 AND deleted_time > 0",
+            params![id, now, parent_id],
+        )?;
+        if changed == 0 {
+            return Err(Error::msg("笔记不在回收站中，恢复失败"));
+        }
+        self.conn.execute(
+            "DELETE FROM deleted_items WHERE item_id = ?1 AND item_type = 1",
+            params![id],
+        )?;
+        // The table only exists once a local delete has happened; a missing
+        // table simply means there is nothing to cancel.
+        let _ = self.conn.execute(
+            "DELETE FROM joplin_rs_pending_deletes WHERE item_id = ?1",
+            params![id],
+        );
+        self.get_note(id)
+    }
+
+    /// Hard-delete trash rows. The remote `.md` must go too, so every purged
+    /// id is (re-)queued with a fresh timestamp: the sync engine only replays
+    /// deletes newer than the last successful run.
+    pub fn purge_notes(&self, ids: &[String]) -> Result<usize> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS joplin_rs_pending_deletes (
+                item_id TEXT PRIMARY KEY, deleted_time INTEGER NOT NULL
+             );",
+        )?;
+        let now = now_ms();
+        let mut purged = 0;
+        for id in ids {
+            let changed = self.conn.execute(
+                "DELETE FROM notes WHERE id = ?1 AND deleted_time > 0",
+                params![id],
+            )?;
+            if changed == 0 {
+                continue;
+            }
+            self.conn
+                .execute("DELETE FROM note_tags WHERE note_id = ?1", params![id])?;
+            self.conn.execute(
+                "DELETE FROM deleted_items WHERE item_id = ?1 AND item_type = 1",
+                params![id],
+            )?;
+            self.conn.execute(
+                "INSERT OR REPLACE INTO joplin_rs_pending_deletes (item_id, deleted_time)
+                 VALUES (?1, ?2)",
+                params![id, now],
+            )?;
+            purged += 1;
+        }
+        Ok(purged)
+    }
+
+    /// Recycle bin → 永久删除笔记. Live notes are refused, so a stale id in a
+    /// context menu can never erase a note that was already restored.
+    pub fn permanently_delete_note(&self, id: &str) -> Result<()> {
+        let deleted: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT deleted_time FROM notes WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if deleted.unwrap_or(0) == 0 {
+            return Err(Error::msg("笔记不在回收站中"));
+        }
+        let owned = id.to_string();
+        let purged = self.purge_notes(&[owned])?;
+        if purged == 0 {
+            return Err(Error::msg("笔记不在回收站中"));
+        }
+        Ok(())
+    }
+
+    /// Recycle bin → 清空回收站.
+    pub fn empty_trash(&self) -> Result<usize> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id FROM notes WHERE deleted_time > 0")?;
+        let ids = stmt
+            .query_map([], |r| r.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        self.purge_notes(&ids)
+    }
+
     pub fn create_folder(&self, title: &str, parent_id: &str) -> Result<Folder> {
         let id = uuid::Uuid::new_v4().simple().to_string();
         let now = now_ms();
@@ -605,6 +768,7 @@ impl Db {
         };
         Ok(Stats {
             notes: count("SELECT COUNT(*) FROM notes WHERE deleted_time = 0"),
+            trash_notes: count("SELECT COUNT(*) FROM notes WHERE deleted_time > 0"),
             folders: count("SELECT COUNT(*) FROM folders WHERE deleted_time = 0"),
             resources: count("SELECT COUNT(*) FROM resources"),
             tags: count("SELECT COUNT(*) FROM tags"),
@@ -808,6 +972,74 @@ mod tests {
             // Unknown notebooks are rejected instead of silently orphaning.
             assert!(db.move_note(&note.id, "nope").is_err());
             assert_eq!(db.get_note(&note.id).expect("note").parent_id, to.id);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recycle_bin_lists_restores_and_purges() {
+        let dir = std::env::temp_dir().join(format!("joplin-rs-trash-{}", now_ms()));
+        let path = dir.join("notes.sqlite");
+        create_empty_database(&path).expect("create empty database");
+        {
+            let db = Db::open(&path).expect("open");
+            let folder = db.create_folder("inbox", "").expect("folder");
+            let a = db.create_note(&folder.id, "keep me").expect("note");
+            let b = db.create_note(&folder.id, "purge me").expect("note");
+            let c = db.create_note(&folder.id, "live").expect("note");
+            db.save_note(&a.id, "keep me", "some body").expect("save");
+
+            // A live note must never be hard-deleted by a stale recycle-bin id.
+            assert!(db.permanently_delete_note(&c.id).is_err());
+
+            db.delete_note(&a.id).expect("delete a");
+            db.delete_note(&b.id).expect("delete b");
+            assert_eq!(db.list_notes(None, None, 0, 0).expect("all").len(), 1);
+            let trash = db.list_trash_notes().expect("trash");
+            assert_eq!(trash.len(), 2);
+            assert!(trash.iter().all(|n| n.deleted_time > 0));
+            assert!(db.get_note(&a.id).is_err());
+            assert_eq!(db.get_trash_note(&a.id).expect("read trash").title, "keep me");
+            let cfg = ProfileConfig {
+                work_db: path.clone(),
+                resources: dir.join("resources"),
+                synced_at: 0,
+            };
+            assert_eq!(db.stats(&cfg).expect("stats").trash_notes, 2);
+
+            // Restore clears the tombstone and the queued remote deletion, so
+            // the next sync uploads the note instead of deleting it remotely.
+            let restored = db.restore_note(&a.id).expect("restore");
+            assert_eq!(restored.parent_id, folder.id);
+            let pending: i64 = db
+                .conn
+                .query_row(
+                    "SELECT COUNT(*) FROM joplin_rs_pending_deletes WHERE item_id = ?1",
+                    params![a.id],
+                    |r| r.get(0),
+                )
+                .expect("pending row");
+            assert_eq!(pending, 0);
+            assert_eq!(db.list_notes(None, None, 0, 0).expect("all").len(), 2);
+            assert_eq!(db.list_trash_notes().expect("trash").len(), 1);
+
+            db.permanently_delete_note(&b.id).expect("purge");
+            assert!(db.get_trash_note(&b.id).is_err());
+            assert!(db.list_trash_notes().expect("trash").is_empty());
+            let queued: i64 = db
+                .conn
+                .query_row(
+                    "SELECT COUNT(*) FROM joplin_rs_pending_deletes WHERE item_id = ?1",
+                    params![b.id],
+                    |r| r.get(0),
+                )
+                .expect("queued row");
+            assert_eq!(queued, 1);
+
+            db.delete_note(&c.id).expect("delete c");
+            assert_eq!(db.empty_trash().expect("empty"), 1);
+            assert!(db.list_trash_notes().expect("trash").is_empty());
+            assert_eq!(db.stats(&cfg).expect("stats").trash_notes, 0);
         }
         let _ = std::fs::remove_dir_all(&dir);
     }

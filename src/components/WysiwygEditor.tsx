@@ -253,6 +253,17 @@ export default function WysiwygEditor({
         [Crepe.Feature.CodeMirror]: {
           theme: [codeSurfaceTheme, syntaxHighlighting(codeSyntax)],
         },
+        // Crepe's "virtual caret" is an absolutely positioned widget whose
+        // top/left are measured once and only refreshed on selection changes
+        // or a resize of the editor box. CodeMirror code blocks mount
+        // asynchronously (and gain a horizontal scrollbar), so the paragraph
+        // below them moves down after the caret was placed; short notes stay at
+        // `.ProseMirror { min-height: 60vh }`, so the editor box does not
+        // resize either and the fake caret is not recomputed — it stays above
+        // "Please enter...". The native caret always tracks the text position.
+        // The Cursor feature stays enabled for gap/drop cursors — only its
+        // virtual caret is switched off.
+        [Crepe.Feature.Cursor]: { virtual: false },
         // Crepe's built-in uploader would inline a `data:` URL that never
         // becomes a Joplin resource. Route every entry point (block menu's
         // "图片", inline upload button, paste and file drop — they all end up in

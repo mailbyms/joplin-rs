@@ -18,6 +18,9 @@ pub struct NoteSummary {
     pub parent_id: String,
     pub created_time: i64,
     pub updated_time: i64,
+    /// 0 for a live note; the time it was moved to the recycle bin otherwise.
+    /// The frontend uses this to label the trash list with the deletion date.
+    pub deleted_time: i64,
     pub is_todo: i64,
     pub todo_completed: i64,
     pub excerpt: String,
@@ -78,6 +81,8 @@ pub struct SearchHit {
 #[serde(rename_all = "camelCase")]
 pub struct Stats {
     pub notes: i64,
+    /// Soft-deleted notes (`deleted_time > 0`), shown as the recycle bin badge.
+    pub trash_notes: i64,
     pub folders: i64,
     pub resources: i64,
     pub tags: i64,

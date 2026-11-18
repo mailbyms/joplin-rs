@@ -176,6 +176,7 @@ pub fn save_note(
         is_todo: 0,
         todo_completed: 0,
         excerpt: make_excerpt(&body, 110),
+        deleted_time: 0,
     })
 }
 
@@ -205,6 +206,7 @@ pub fn move_note(
         is_todo: note.is_todo,
         todo_completed: note.todo_completed,
         excerpt: make_excerpt(&note.body, 110),
+        deleted_time: 0,
     })
 }
 
@@ -235,6 +237,63 @@ pub fn delete_note(state: State<'_, AppState>, id: String) -> Result<()> {
     state.index.write().remove(&id);
     state.note_titles.write().remove(&id);
     Ok(())
+}
+
+/// One round-trip for the read-only recycle-bin preview: the note metadata
+/// (title, folder, tags) plus its rendered markdown HTML.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrashNoteDetail {
+    pub note: Note,
+    pub rendered: RenderedNote,
+}
+
+#[tauri::command]
+pub fn list_trash_notes(state: State<'_, AppState>) -> Result<Vec<NoteSummary>> {
+    state.with_db(|db| db.list_trash_notes())
+}
+
+#[tauri::command]
+pub fn get_trash_note(state: State<'_, AppState>, id: String) -> Result<TrashNoteDetail> {
+    let note = state.with_db(|db| db.get_trash_note(&id))?;
+    Ok(TrashNoteDetail {
+        rendered: render_with(&state, &note.body),
+        note,
+    })
+}
+
+#[tauri::command]
+pub fn restore_note(state: State<'_, AppState>, id: String) -> Result<Note> {
+    let note = state.with_db(|db| db.restore_note(&id))?;
+    state.index.write().upsert(
+        &note.id,
+        &note.parent_id,
+        &note.title,
+        &note.body,
+        note.updated_time,
+    );
+    state.note_titles.write().insert(note.id.clone(), note.title.clone());
+    Ok(note)
+}
+
+#[tauri::command]
+pub fn permanently_delete_note(state: State<'_, AppState>, id: String) -> Result<()> {
+    state.with_db(|db| db.permanently_delete_note(&id))?;
+    state.index.write().remove(&id);
+    state.note_titles.write().remove(&id);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn empty_trash(state: State<'_, AppState>) -> Result<usize> {
+    // Rebuilding the in-memory index from the database is the only way to be
+    // sure it matches whatever rows were purged (including notes that other
+    // clients had already deleted remotely).
+    state.with_db(|db| {
+        let count = db.empty_trash()?;
+        state.refresh_from_db(db)?;
+        Ok(count)
+    })
 }
 
 /// Full scrollable size of the print sheet, measured by the frontend once the

@@ -18,6 +18,9 @@ export interface NoteSummary {
   isTodo: number;
   todoCompleted: number;
   excerpt: string;
+  /** 0 for a live note; the deletion timestamp for a note in the recycle bin.
+   *  Optional because search hits (a different Rust struct) do not carry it. */
+  deletedTime?: number;
 }
 
 export interface Note {
@@ -52,12 +55,20 @@ export interface RenderedNote {
   outline: OutlineItem[];
 }
 
+/** Read-only preview of a note in the recycle bin (one IPC round-trip). */
+export interface TrashNoteDetail {
+  note: Note;
+  rendered: RenderedNote;
+}
+
 export interface SearchHit extends NoteSummary {
   score: number;
 }
 
 export interface Stats {
   notes: number;
+  /** Soft-deleted notes, shown as the recycle-bin badge in the sidebar. */
+  trashNotes: number;
   folders: number;
   resources: number;
   tags: number;
@@ -94,6 +105,7 @@ export type Selection =
   | { kind: "all" }
   | { kind: "folder"; id: string }
   | { kind: "tag"; id: string }
+  | { kind: "trash" }
   | { kind: "search"; query: string };
 
 export interface SyncConfig {

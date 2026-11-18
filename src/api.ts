@@ -14,6 +14,7 @@ import type {
   SyncResult,
   SyncStatus,
   Tag,
+  TrashNoteDetail,
 } from "./types";
 
 /** Typed IPC layer. Every byte of persistence, parsing and search stays in Rust.
@@ -49,6 +50,15 @@ export const api = {
   moveNote: (id: string, folderId: string) =>
     invoke<NoteSummary>("move_note", { id, folderId }),
   deleteNote: (id: string) => invoke<void>("delete_note", { id }),
+  /** Recycle bin: soft-deleted notes, a read-only preview, restore and purge.
+   *  `permanentlyDeleteNote` / `emptyTrash` also queue the remote deletion so
+   *  the next WebDAV sync removes the `.md` file on the server. */
+  listTrashNotes: () => invoke<NoteSummary[]>("list_trash_notes"),
+  getTrashNote: (id: string) => invoke<TrashNoteDetail>("get_trash_note", { id }),
+  restoreNote: (id: string) => invoke<Note>("restore_note", { id }),
+  permanentlyDeleteNote: (id: string) =>
+    invoke<void>("permanently_delete_note", { id }),
+  emptyTrash: () => invoke<number>("empty_trash"),
   /** Writes whatever the window is showing to `path` — the caller puts the note
    *  on screen first (see `PrintSheet`), so no note id is involved. `headings`
    *  turn into the PDF's bookmark tree. `bounds` is the print sheet's full

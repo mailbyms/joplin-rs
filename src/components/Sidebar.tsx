@@ -7,6 +7,10 @@ interface Props {
   tags: Tag[];
   selection: Selection;
   totalNotes: number;
+  /** Number of soft-deleted notes, shown as the recycle-bin badge. */
+  trashCount: number;
+  /** Right-click on the bin entry under 笔记本 opens its context menu. */
+  onTrashContext: (x: number, y: number) => void;
   syncConfigured: boolean;
   syncBusy: boolean;
   syncTitle: string;
@@ -143,6 +147,8 @@ export default function Sidebar({
   tags,
   selection,
   totalNotes,
+  trashCount,
+  onTrashContext,
   syncConfigured,
   syncBusy,
   syncTitle,
@@ -242,6 +248,25 @@ export default function Sidebar({
             </button>
           );
         })}
+
+        {/* The bin is a child of the 笔记本 section (one level under its
+            heading), not a separate bottom bar: it scrolls together with the
+            notebook tree. Right-click still offers 清空回收站. */}
+        <button
+          className={`nav-item trash-item ${
+            selection.kind === "trash" ? "active" : ""
+          }`}
+          onClick={() => onSelect({ kind: "trash" })}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            onTrashContext(e.clientX, e.clientY);
+          }}
+          title="查看已删除的笔记 · 右键可清空回收站"
+        >
+          <span className="nav-icon" aria-hidden="true">🗑︎</span>
+          <span className="nav-label">回收站</span>
+          {trashCount > 0 && <span className="nav-count">{trashCount}</span>}
+        </button>
 
         {tags.length > 0 && (
           <>
