@@ -70,6 +70,21 @@ pub fn run() {
     };
 
     tauri::Builder::default()
+        // Only one copy of the app may run at a time. A second launch hands
+        // its command line to the running instance and exits; we bring that
+        // instance's window forward so the user sees where it went.
+        .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+            startup_log(&format!(
+                "single-instance: second launch redirected ({} args, cwd={})",
+                args.len(),
+                cwd
+            ));
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {

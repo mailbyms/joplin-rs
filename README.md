@@ -112,6 +112,7 @@ Rust 主进程只拉起一个 WebView2 browser 进程，其余 4 个 WebView2 �
 - 关于面板（显示「数据源：WebDAV（唯一来源）」、数据目录与上次同步时间）
 - 快捷键：Ctrl+N 新建 · Ctrl+S 保存并同步 · Ctrl+F 搜索 · Ctrl+E 切换源码 / 打字机 · F12 / Ctrl+Shift+I 开发者工具
 - 原生菜单栏：文件 / 视图 / 工具 / 帮助；菜单事件经 `menu://action` 转发到前端
+- **单实例运行**：重复启动时第二个进程立即退出，并把已有窗口取消最小化、显示并切到前台
 - **WebDAV 同步**：同步设置、连接测试、预演（dry-run）、立即同步、自动同步、进度与结果
 - 应用自包含数据目录（`paths.rs` 统一路径，附件只来自 WebDAV，支持 `JOPLIN_RS_DATA_DIR` 覆盖）
 - **PDF 导出**（右键笔记卡片）：Windows 走 WebView2，macOS 走 WKWebView；见下节
